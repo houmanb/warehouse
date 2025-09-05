@@ -1,23 +1,107 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 import os
 import redis
+import json
+from datetime import datetime
 
-app = FastAPI(title="Warehouse API", version="1.0.0")
+app = FastAPI(title="Warehouse API", version="2.0.0")
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 r = redis.StrictRedis(host=REDIS_HOST, port=REDIS_PORT, db=1, decode_responses=True)
+
+# Pydantic Models
+class CustomerIn(BaseModel):
+    name: str
+    email: str
+    phone: Optional[str] = None
+    address: Optional[str] = None
+
+class CustomerUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+
+class CustomerOut(BaseModel):
+    customer_id: int
+    name: str
+    email: str
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    created_at: str
+    is_active: bool
+
+class CategoryIn(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+class CategoryUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+class CategoryOut(BaseModel):
+    category_id: int
+    name: str
+    description: Optional[str] = None
+    created_at: str
+
+class ItemIn(BaseModel):
+    name: str
+    description: Optional[str] = None
+    price: float
+    stock_quantity: int
+    category_id: int
+    sku: str
+
+class ItemUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    price: Optional[float] = None
+    stock_quantity: Optional[int] = None
+    category_id: Optional[int] = None
+    sku: Optional[str] = None
+
+class ItemOut(BaseModel):
+    item_id: int
+    name: str
+    description: Optional[str] = None
+    price: float
+    stock_quantity: int
+    category_id: int
+    sku: str
+    is_active: bool
+    created_at: str
+
+class BasketItemIn(BaseModel):
+    item_id: int
+    quantity: int
+
+class BasketItemOut(BaseModel):
+    item_id: int
+    item_name: str
+    quantity: int
+    unit_price: float
+    total_price: float
+
+class BasketOut(BaseModel):
+    basket_id: int
+    customer_id: int
+    items: List[BasketItemOut]
+    total_amount: float
+    created_at: str
+    updated_at: str
 
 class OrderIn(BaseModel):
     customer_name: str
     items: List[str]
 
 class OrderUpdate(BaseModel):
-    customer_name: str | None = None
-    items: List[str] | None = None
-    status: str | None = None
+    customer_name: Optional[str] = None
+    items: Optional[List[str]] = None
+    status: Optional[str] = None
 
 class OrderOut(BaseModel):
     order_id: int
@@ -25,10 +109,450 @@ class OrderOut(BaseModel):
     items: List[str]
     status: str
 
+# Helper Functions
+def get_timestamp():
+    return datetime.utcnow().isoformat()
+
+def init_sample_data():
+    """Initialize sample data if not exists"""
+    if not r.exists("categories_initialized"):
+        # Sample categories
+        categories = [
+            {"name": "Electronics", "description": "Electronic devices and accessories"},
+            {"name": "Clothing", "description": "Apparel and fashion items"},
+            {"name": "Books", "description": "Books and educational materials"},
+            {"name": "Home & Garden", "description": "Home improvement and gardening supplies"}
+        ]
+        
+        for cat in categories:
+            cat_id = r.incr("category_id")
+            data = {
+                "category_id": str(cat_id),
+                "name": cat["name"],
+                "description": cat["description"],
+                "created_at": get_timestamp()
+            }
+            r.hset(f"category:{cat_id}", mapping=data)
+            r.sadd("categories", cat_id)
+        
+        # Sample items
+        items = [
+            {"name": "Laptop", "description": "High-performance laptop", "price": 999.99, "stock_quantity": 50, "category_id": 1, "sku": "ELEC001"},
+            {"name": "Smartphone", "description": "Latest smartphone", "price": 699.99, "stock_quantity": 100, "category_id": 1, "sku": "ELEC002"},
+            {"name": "T-Shirt", "description": "Cotton t-shirt", "price": 19.99, "stock_quantity": 200, "category_id": 2, "sku": "CLOT001"},
+            {"name": "Jeans", "description": "Denim jeans", "price": 49.99, "stock_quantity": 75, "category_id": 2, "sku": "CLOT002"},
+            {"name": "Python Programming", "description": "Learn Python programming", "price": 29.99, "stock_quantity": 30, "category_id": 3, "sku": "BOOK001"},
+            {"name": "Garden Hose", "description": "50ft garden hose", "price": 39.99, "stock_quantity": 25, "category_id": 4, "sku": "HOME001"}
+        ]
+        
+        for item in items:
+            item_id = r.incr("item_id")
+            data = {
+                "item_id": str(item_id),
+                "name": item["name"],
+                "description": item["description"],
+                "price": str(item["price"]),
+                "stock_quantity": str(item["stock_quantity"]),
+                "category_id": str(item["category_id"]),
+                "sku": item["sku"],
+                "is_active": "true",
+                "created_at": get_timestamp()
+            }
+            r.hset(f"item:{item_id}", mapping=data)
+            r.sadd("items", item_id)
+        
+        r.set("categories_initialized", "true")
+
+# Initialize sample data on startup
+init_sample_data()
+
 @app.get("/health")
 def health():
     return {"ok": True}
 
+# Customer Endpoints
+@app.post("/customers", response_model=CustomerOut)
+def create_customer(customer: CustomerIn):
+    # Check if email already exists
+    existing_customers = r.smembers("customers")
+    for cid in existing_customers:
+        existing_data = r.hgetall(f"customer:{cid}")
+        if existing_data.get("email") == customer.email:
+            raise HTTPException(status_code=400, detail="Email already exists")
+    
+    customer_id = r.incr("customer_id")
+    data = {
+        "customer_id": str(customer_id),
+        "name": customer.name,
+        "email": customer.email,
+        "phone": customer.phone or "",
+        "address": customer.address or "",
+        "created_at": get_timestamp(),
+        "is_active": "true"
+    }
+    r.hset(f"customer:{customer_id}", mapping=data)
+    r.sadd("customers", customer_id)
+    
+    return CustomerOut(
+        customer_id=customer_id,
+        name=customer.name,
+        email=customer.email,
+        phone=customer.phone,
+        address=customer.address,
+        created_at=data["created_at"],
+        is_active=True
+    )
+
+@app.get("/customers/{customer_id}", response_model=CustomerOut)
+def get_customer(customer_id: int):
+    key = f"customer:{customer_id}"
+    if not r.exists(key):
+        raise HTTPException(status_code=404, detail="Customer not found")
+    
+    data = r.hgetall(key)
+    return CustomerOut(
+        customer_id=int(data["customer_id"]),
+        name=data["name"],
+        email=data["email"],
+        phone=data["phone"] if data["phone"] else None,
+        address=data["address"] if data["address"] else None,
+        created_at=data["created_at"],
+        is_active=data["is_active"] == "true"
+    )
+
+@app.get("/customers", response_model=List[CustomerOut])
+def list_customers():
+    ids = sorted([int(i) for i in r.smembers("customers")])
+    customers = []
+    for cid in ids:
+        data = r.hgetall(f"customer:{cid}")
+        if data:
+            customers.append(CustomerOut(
+                customer_id=int(data["customer_id"]),
+                name=data["name"],
+                email=data["email"],
+                phone=data["phone"] if data["phone"] else None,
+                address=data["address"] if data["address"] else None,
+                created_at=data["created_at"],
+                is_active=data["is_active"] == "true"
+            ))
+    return customers
+
+@app.patch("/customers/{customer_id}", response_model=CustomerOut)
+def update_customer(customer_id: int, upd: CustomerUpdate):
+    key = f"customer:{customer_id}"
+    if not r.exists(key):
+        raise HTTPException(status_code=404, detail="Customer not found")
+    
+    if upd.name is not None:
+        r.hset(key, "name", upd.name)
+    if upd.email is not None:
+        r.hset(key, "email", upd.email)
+    if upd.phone is not None:
+        r.hset(key, "phone", upd.phone)
+    if upd.address is not None:
+        r.hset(key, "address", upd.address)
+    
+    data = r.hgetall(key)
+    return CustomerOut(
+        customer_id=int(data["customer_id"]),
+        name=data["name"],
+        email=data["email"],
+        phone=data["phone"] if data["phone"] else None,
+        address=data["address"] if data["address"] else None,
+        created_at=data["created_at"],
+        is_active=data["is_active"] == "true"
+    )
+
+@app.delete("/customers/{customer_id}")
+def delete_customer(customer_id: int):
+    key = f"customer:{customer_id}"
+    if not r.exists(key):
+        raise HTTPException(status_code=404, detail="Customer not found")
+    
+    # Soft delete
+    r.hset(key, "is_active", "false")
+    return {"deleted": customer_id}
+
+# Category Endpoints
+@app.post("/categories", response_model=CategoryOut)
+def create_category(category: CategoryIn):
+    category_id = r.incr("category_id")
+    data = {
+        "category_id": str(category_id),
+        "name": category.name,
+        "description": category.description or "",
+        "created_at": get_timestamp()
+    }
+    r.hset(f"category:{category_id}", mapping=data)
+    r.sadd("categories", category_id)
+    
+    return CategoryOut(
+        category_id=category_id,
+        name=category.name,
+        description=category.description,
+        created_at=data["created_at"]
+    )
+
+@app.get("/categories/{category_id}", response_model=CategoryOut)
+def get_category(category_id: int):
+    key = f"category:{category_id}"
+    if not r.exists(key):
+        raise HTTPException(status_code=404, detail="Category not found")
+    
+    data = r.hgetall(key)
+    return CategoryOut(
+        category_id=int(data["category_id"]),
+        name=data["name"],
+        description=data["description"] if data["description"] else None,
+        created_at=data["created_at"]
+    )
+
+@app.get("/categories", response_model=List[CategoryOut])
+def list_categories():
+    ids = sorted([int(i) for i in r.smembers("categories")])
+    categories = []
+    for cid in ids:
+        data = r.hgetall(f"category:{cid}")
+        if data:
+            categories.append(CategoryOut(
+                category_id=int(data["category_id"]),
+                name=data["name"],
+                description=data["description"] if data["description"] else None,
+                created_at=data["created_at"]
+            ))
+    return categories
+
+# Item Endpoints
+@app.post("/items", response_model=ItemOut)
+def create_item(item: ItemIn):
+    # Check if SKU already exists
+    existing_items = r.smembers("items")
+    for iid in existing_items:
+        existing_data = r.hgetall(f"item:{iid}")
+        if existing_data.get("sku") == item.sku:
+            raise HTTPException(status_code=400, detail="SKU already exists")
+    
+    # Check if category exists
+    if not r.exists(f"category:{item.category_id}"):
+        raise HTTPException(status_code=400, detail="Category not found")
+    
+    item_id = r.incr("item_id")
+    data = {
+        "item_id": str(item_id),
+        "name": item.name,
+        "description": item.description or "",
+        "price": str(item.price),
+        "stock_quantity": str(item.stock_quantity),
+        "category_id": str(item.category_id),
+        "sku": item.sku,
+        "is_active": "true",
+        "created_at": get_timestamp()
+    }
+    r.hset(f"item:{item_id}", mapping=data)
+    r.sadd("items", item_id)
+    
+    return ItemOut(
+        item_id=item_id,
+        name=item.name,
+        description=item.description,
+        price=item.price,
+        stock_quantity=item.stock_quantity,
+        category_id=item.category_id,
+        sku=item.sku,
+        is_active=True,
+        created_at=data["created_at"]
+    )
+
+@app.get("/items/{item_id}", response_model=ItemOut)
+def get_item(item_id: int):
+    key = f"item:{item_id}"
+    if not r.exists(key):
+        raise HTTPException(status_code=404, detail="Item not found")
+    
+    data = r.hgetall(key)
+    return ItemOut(
+        item_id=int(data["item_id"]),
+        name=data["name"],
+        description=data["description"] if data["description"] else None,
+        price=float(data["price"]),
+        stock_quantity=int(data["stock_quantity"]),
+        category_id=int(data["category_id"]),
+        sku=data["sku"],
+        is_active=data["is_active"] == "true",
+        created_at=data["created_at"]
+    )
+
+@app.get("/items", response_model=List[ItemOut])
+def list_items():
+    ids = sorted([int(i) for i in r.smembers("items")])
+    items = []
+    for iid in ids:
+        data = r.hgetall(f"item:{iid}")
+        if data and data.get("is_active") == "true":
+            items.append(ItemOut(
+                item_id=int(data["item_id"]),
+                name=data["name"],
+                description=data["description"] if data["description"] else None,
+                price=float(data["price"]),
+                stock_quantity=int(data["stock_quantity"]),
+                category_id=int(data["category_id"]),
+                sku=data["sku"],
+                is_active=True,
+                created_at=data["created_at"]
+            ))
+    return items
+
+@app.patch("/items/{item_id}", response_model=ItemOut)
+def update_item(item_id: int, upd: ItemUpdate):
+    key = f"item:{item_id}"
+    if not r.exists(key):
+        raise HTTPException(status_code=404, detail="Item not found")
+    
+    if upd.name is not None:
+        r.hset(key, "name", upd.name)
+    if upd.description is not None:
+        r.hset(key, "description", upd.description)
+    if upd.price is not None:
+        r.hset(key, "price", str(upd.price))
+    if upd.stock_quantity is not None:
+        r.hset(key, "stock_quantity", str(upd.stock_quantity))
+    if upd.category_id is not None:
+        if not r.exists(f"category:{upd.category_id}"):
+            raise HTTPException(status_code=400, detail="Category not found")
+        r.hset(key, "category_id", str(upd.category_id))
+    if upd.sku is not None:
+        r.hset(key, "sku", upd.sku)
+    
+    data = r.hgetall(key)
+    return ItemOut(
+        item_id=int(data["item_id"]),
+        name=data["name"],
+        description=data["description"] if data["description"] else None,
+        price=float(data["price"]),
+        stock_quantity=int(data["stock_quantity"]),
+        category_id=int(data["category_id"]),
+        sku=data["sku"],
+        is_active=data["is_active"] == "true",
+        created_at=data["created_at"]
+    )
+
+# Basket Endpoints
+@app.post("/baskets/{customer_id}/items")
+def add_to_basket(customer_id: int, basket_item: BasketItemIn):
+    # Check if customer exists
+    if not r.exists(f"customer:{customer_id}"):
+        raise HTTPException(status_code=404, detail="Customer not found")
+    
+    # Check if item exists
+    if not r.exists(f"item:{basket_item.item_id}"):
+        raise HTTPException(status_code=404, detail="Item not found")
+    
+    # Get or create basket for customer
+    basket_key = f"basket:{customer_id}"
+    if not r.exists(basket_key):
+        basket_data = {
+            "basket_id": str(customer_id),
+            "customer_id": str(customer_id),
+            "created_at": get_timestamp(),
+            "updated_at": get_timestamp()
+        }
+        r.hset(basket_key, mapping=basket_data)
+    else:
+        r.hset(basket_key, "updated_at", get_timestamp())
+    
+    # Add item to basket
+    basket_item_key = f"basket_item:{customer_id}:{basket_item.item_id}"
+    if r.exists(basket_item_key):
+        # Update quantity if item already in basket
+        current_qty = int(r.hget(basket_item_key, "quantity"))
+        new_qty = current_qty + basket_item.quantity
+        r.hset(basket_item_key, "quantity", str(new_qty))
+    else:
+        # Add new item to basket
+        item_data = r.hgetall(f"item:{basket_item.item_id}")
+        basket_item_data = {
+            "item_id": str(basket_item.item_id),
+            "quantity": str(basket_item.quantity),
+            "unit_price": item_data["price"],
+            "added_at": get_timestamp()
+        }
+        r.hset(basket_item_key, mapping=basket_item_data)
+        r.sadd(f"basket_items:{customer_id}", basket_item.item_id)
+    
+    return {"message": "Item added to basket"}
+
+@app.get("/baskets/{customer_id}", response_model=BasketOut)
+def get_basket(customer_id: int):
+    basket_key = f"basket:{customer_id}"
+    if not r.exists(basket_key):
+        raise HTTPException(status_code=404, detail="Basket not found")
+    
+    basket_data = r.hgetall(basket_key)
+    basket_items = []
+    total_amount = 0.0
+    
+    item_ids = r.smembers(f"basket_items:{customer_id}")
+    for item_id in item_ids:
+        basket_item_key = f"basket_item:{customer_id}:{item_id}"
+        basket_item_data = r.hgetall(basket_item_key)
+        if basket_item_data:
+            item_data = r.hgetall(f"item:{item_id}")
+            quantity = int(basket_item_data["quantity"])
+            unit_price = float(basket_item_data["unit_price"])
+            total_price = quantity * unit_price
+            total_amount += total_price
+            
+            basket_items.append(BasketItemOut(
+                item_id=int(item_id),
+                item_name=item_data["name"],
+                quantity=quantity,
+                unit_price=unit_price,
+                total_price=total_price
+            ))
+    
+    return BasketOut(
+        basket_id=int(basket_data["basket_id"]),
+        customer_id=int(basket_data["customer_id"]),
+        items=basket_items,
+        total_amount=total_amount,
+        created_at=basket_data["created_at"],
+        updated_at=basket_data["updated_at"]
+    )
+
+@app.delete("/baskets/{customer_id}/items/{item_id}")
+def remove_from_basket(customer_id: int, item_id: int):
+    basket_item_key = f"basket_item:{customer_id}:{item_id}"
+    if not r.exists(basket_item_key):
+        raise HTTPException(status_code=404, detail="Item not in basket")
+    
+    r.delete(basket_item_key)
+    r.srem(f"basket_items:{customer_id}", item_id)
+    
+    # Update basket timestamp
+    basket_key = f"basket:{customer_id}"
+    if r.exists(basket_key):
+        r.hset(basket_key, "updated_at", get_timestamp())
+    
+    return {"message": "Item removed from basket"}
+
+@app.delete("/baskets/{customer_id}")
+def clear_basket(customer_id: int):
+    basket_key = f"basket:{customer_id}"
+    if not r.exists(basket_key):
+        raise HTTPException(status_code=404, detail="Basket not found")
+    
+    # Remove all basket items
+    item_ids = r.smembers(f"basket_items:{customer_id}")
+    for item_id in item_ids:
+        r.delete(f"basket_item:{customer_id}:{item_id}")
+    
+    r.delete(f"basket_items:{customer_id}")
+    r.delete(basket_key)
+    
+    return {"message": "Basket cleared"}
+
+# Existing Order Endpoints (unchanged)
 @app.post("/orders", response_model=OrderOut)
 def create_order(order: OrderIn):
     order_id = r.incr("order_id")
