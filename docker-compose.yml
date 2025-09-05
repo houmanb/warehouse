@@ -1,0 +1,23 @@
+services:
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  fastapi-app:
+    image: warehouse-fastapi-app:latest
+    depends_on:
+      - redis
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    ports:
+      - "8000:8000"
+
+  mcp:
+    image: warehouse-mcp:latest
+    # no build here, no ports needed for stdio MCP
+    environment:
+      # Make sure your MCP server actually uses this instead of touching Redis directly
+      API_BASE_URL: http://fastapi-app:8000
+      PYTHONUNBUFFERED: "1"
