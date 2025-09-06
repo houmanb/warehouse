@@ -1,18 +1,53 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict
 import os
 import redis
 import json
 from datetime import datetime
 
-app = FastAPI(title="Warehouse API", version="2.0.0")
+app = FastAPI(title="Enhanced Warehouse API", version="2.1.0")
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 r = redis.StrictRedis(host=REDIS_HOST, port=REDIS_PORT, db=1, decode_responses=True)
 
-# Pydantic Models
+# Enhanced Pydantic Models
+class OrderStatusHistory(BaseModel):
+    status: str
+    timestamp: str
+    notes: Optional[str] = None
+
+class OrderIn(BaseModel):
+    customer_name: str
+    items: List[str]
+    notes: Optional[str] = None
+
+class OrderUpdate(BaseModel):
+    customer_name: Optional[str] = None
+    items: Optional[List[str]] = None
+    status: Optional[str] = None
+    notes: Optional[str] = None
+
+class OrderOut(BaseModel):
+    order_id: int
+    customer_name: str
+    items: List[str]
+    status: str
+    notes: Optional[str] = None
+    created_at: str
+    updated_at: str
+    status_history: List[OrderStatusHistory]
+    # Fulfillment workflow timestamps
+    placed_at: Optional[str] = None
+    confirmed_at: Optional[str] = None
+    picked_at: Optional[str] = None
+    packed_at: Optional[str] = None
+    shipped_at: Optional[str] = None
+    delivered_at: Optional[str] = None
+    cancelled_at: Optional[str] = None
+
+# Existing models
 class CustomerIn(BaseModel):
     name: str
     email: str
@@ -36,10 +71,6 @@ class CustomerOut(BaseModel):
 
 class CategoryIn(BaseModel):
     name: str
-    description: Optional[str] = None
-
-class CategoryUpdate(BaseModel):
-    name: Optional[str] = None
     description: Optional[str] = None
 
 class CategoryOut(BaseModel):
@@ -94,24 +125,82 @@ class BasketOut(BaseModel):
     created_at: str
     updated_at: str
 
-class OrderIn(BaseModel):
-    customer_name: str
-    items: List[str]
-
-class OrderUpdate(BaseModel):
-    customer_name: Optional[str] = None
-    items: Optional[List[str]] = None
-    status: Optional[str] = None
-
-class OrderOut(BaseModel):
-    order_id: int
-    customer_name: str
-    items: List[str]
-    status: str
-
 # Helper Functions
 def get_timestamp():
     return datetime.utcnow().isoformat()
+
+def add_status_to_history(order_id: int, status: str, notes: Optional[str] = None):
+    """Add a status change to order history"""
+    timestamp = get_timestamp()
+    history_key = f"order_history:{order_id}"
+    
+    new_entry = {
+        "status": status,
+        "timestamp": timestamp,
+        "notes": notes
+    }
+    
+    # Store as JSON string in Redis list
+    r.lpush(history_key, json.dumps(new_entry))
+    
+    return timestamp
+
+def get_order_history(order_id: int) -> List[OrderStatusHistory]:
+    """Get order status history"""
+    history_key = f"order_history:{order_id}"
+    history_data = r.lrange(history_key, 0, -1)
+    
+    if not history_data:
+        return []
+    
+    # Reverse to get chronological order (oldest first)
+    history_items = [json.loads(item) for item in reversed(history_data)]
+    return [OrderStatusHistory(**item) for item in history_items]
+
+def update_fulfillment_timestamp(order_id: int, status: str):
+    """Update specific fulfillment workflow timestamp"""
+    timestamp = get_timestamp()
+    order_key = f"order:{order_id}"
+    
+    # Map status to timestamp field
+    timestamp_mapping = {
+        "pending": "placed_at",
+        "confirmed": "confirmed_at", 
+        "picking": "picked_at",
+        "packed": "packed_at",
+        "shipped": "shipped_at",
+        "delivered": "delivered_at",
+        "cancelled": "cancelled_at"
+    }
+    
+    if status in timestamp_mapping:
+        field_name = timestamp_mapping[status]
+        r.hset(order_key, field_name, timestamp)
+    
+    return timestamp
+
+def get_order_response(order_id: int) -> OrderOut:
+    """Helper function to build OrderOut response with all timestamps"""
+    data = r.hgetall(f"order:{order_id}")
+    history = get_order_history(order_id)
+    
+    return OrderOut(
+        order_id=int(data["order_id"]),
+        customer_name=data["customer_name"],
+        items=data["items"].split(",") if data.get("items") else [],
+        status=data["status"],
+        notes=data.get("notes"),
+        created_at=data["created_at"],
+        updated_at=data["updated_at"],
+        status_history=history,
+        placed_at=data.get("placed_at"),
+        confirmed_at=data.get("confirmed_at"),
+        picked_at=data.get("picked_at"),
+        packed_at=data.get("packed_at"),
+        shipped_at=data.get("shipped_at"),
+        delivered_at=data.get("delivered_at"),
+        cancelled_at=data.get("cancelled_at")
+    )
 
 def init_sample_data():
     """Initialize sample data if not exists"""
@@ -552,52 +641,49 @@ def clear_basket(customer_id: int):
     
     return {"message": "Basket cleared"}
 
-# Existing Order Endpoints (unchanged)
+# Enhanced Order Endpoints
 @app.post("/orders", response_model=OrderOut)
 def create_order(order: OrderIn):
     order_id = r.incr("order_id")
+    timestamp = get_timestamp()
+    
+    # Create order with enhanced timestamps
     data = {
         "order_id": str(order_id),
         "customer_name": order.customer_name,
         "items": ",".join(order.items),
         "status": "pending",
+        "notes": order.notes or "",
+        "created_at": timestamp,
+        "updated_at": timestamp,
+        "placed_at": timestamp,  # Order placed timestamp
     }
     r.hset(f"order:{order_id}", mapping=data)
     r.sadd("orders", order_id)
-    return {
-        "order_id": order_id,
-        "customer_name": order.customer_name,
-        "items": order.items,
-        "status": "pending",
-    }
+    
+    # Add initial status to history
+    add_status_to_history(order_id, "pending", "Order created")
+    
+    # Get the created order for response
+    return get_order_response(order_id)
 
 @app.get("/orders/{order_id}", response_model=OrderOut)
 def get_order(order_id: int):
     key = f"order:{order_id}"
     if not r.exists(key):
         raise HTTPException(status_code=404, detail="Order not found")
-    data = r.hgetall(key)
-    return {
-        "order_id": int(data["order_id"]),
-        "customer_name": data["customer_name"],
-        "items": data["items"].split(",") if data.get("items") else [],
-        "status": data["status"],
-    }
+    
+    return get_order_response(order_id)
 
 @app.get("/orders", response_model=List[OrderOut])
 def list_orders():
     ids = sorted([int(i) for i in r.smembers("orders")], key=int)
-    out: List[OrderOut] = []
+    orders = []
     for oid in ids:
         data = r.hgetall(f"order:{oid}")
         if data:
-            out.append({
-                "order_id": int(data["order_id"]),
-                "customer_name": data["customer_name"],
-                "items": data["items"].split(",") if data.get("items") else [],
-                "status": data["status"],
-            })
-    return out
+            orders.append(get_order_response(oid))
+    return orders
 
 @app.patch("/orders/{order_id}", response_model=OrderOut)
 def update_order(order_id: int, upd: OrderUpdate):
@@ -605,26 +691,123 @@ def update_order(order_id: int, upd: OrderUpdate):
     if not r.exists(key):
         raise HTTPException(status_code=404, detail="Order not found")
 
+    # Get current status for comparison
+    current_data = r.hgetall(key)
+    current_status = current_data.get("status")
+    
+    # Update basic fields
     if upd.customer_name is not None:
         r.hset(key, "customer_name", upd.customer_name)
     if upd.items is not None:
         r.hset(key, "items", ",".join(upd.items))
-    if upd.status is not None:
+    if upd.notes is not None:
+        r.hset(key, "notes", upd.notes)
+    
+    # Handle status change with workflow timestamps
+    if upd.status is not None and upd.status != current_status:
         r.hset(key, "status", upd.status)
-
-    data = r.hgetall(key)
-    return {
-        "order_id": int(data["order_id"]),
-        "customer_name": data["customer_name"],
-        "items": data["items"].split(",") if data.get("items") else [],
-        "status": data["status"],
-    }
+        
+        # Update fulfillment workflow timestamp
+        update_fulfillment_timestamp(order_id, upd.status)
+        
+        # Add to status history
+        status_note = f"Status changed from {current_status} to {upd.status}"
+        if upd.notes:
+            status_note += f" - {upd.notes}"
+        add_status_to_history(order_id, upd.status, status_note)
+    
+    # Update the updated_at timestamp
+    r.hset(key, "updated_at", get_timestamp())
+    
+    return get_order_response(order_id)
 
 @app.delete("/orders/{order_id}")
 def delete_order(order_id: int):
     key = f"order:{order_id}"
     if not r.exists(key):
         raise HTTPException(status_code=404, detail="Order not found")
+    
+    # Add cancellation to history before deletion
+    add_status_to_history(order_id, "cancelled", "Order deleted")
+    
     r.delete(key)
+    r.delete(f"order_history:{order_id}")
     r.srem("orders", order_id)
     return {"deleted": order_id}
+
+# New endpoint for advancing order through workflow
+@app.post("/orders/{order_id}/advance")
+def advance_order_status(order_id: int, notes: Optional[str] = None):
+    """Advance order to next status in fulfillment workflow"""
+    key = f"order:{order_id}"
+    if not r.exists(key):
+        raise HTTPException(status_code=404, detail="Order not found")
+    
+    current_data = r.hgetall(key)
+    current_status = current_data.get("status")
+    
+    # Define workflow progression
+    workflow = {
+        "pending": "confirmed",
+        "confirmed": "picking", 
+        "picking": "packed",
+        "packed": "shipped",
+        "shipped": "delivered"
+    }
+    
+    if current_status not in workflow:
+        raise HTTPException(status_code=400, detail=f"Cannot advance from status: {current_status}")
+    
+    next_status = workflow[current_status]
+    
+    # Update status and timestamps
+    r.hset(key, "status", next_status)
+    r.hset(key, "updated_at", get_timestamp())
+    update_fulfillment_timestamp(order_id, next_status)
+    
+    # Add to history
+    advance_note = f"Order advanced to {next_status}"
+    if notes:
+        advance_note += f" - {notes}"
+    add_status_to_history(order_id, next_status, advance_note)
+    
+    return {"message": f"Order advanced to {next_status}", "order": get_order_response(order_id)}
+
+# New endpoint to get order timeline
+@app.get("/orders/{order_id}/timeline")
+def get_order_timeline(order_id: int):
+    """Get detailed timeline of order status changes"""
+    if not r.exists(f"order:{order_id}"):
+        raise HTTPException(status_code=404, detail="Order not found")
+    
+    history = get_order_history(order_id)
+    data = r.hgetall(f"order:{order_id}")
+    
+    timeline = {
+        "order_id": order_id,
+        "customer_name": data["customer_name"],
+        "current_status": data["status"],
+        "created_at": data["created_at"],
+        "status_changes": [
+            {
+                "status": h.status,
+                "timestamp": h.timestamp,
+                "notes": h.notes
+            } for h in history
+        ],
+        "fulfillment_timestamps": {
+            "placed_at": data.get("placed_at"),
+            "confirmed_at": data.get("confirmed_at"),
+            "picked_at": data.get("picked_at"),
+            "packed_at": data.get("packed_at"),
+            "shipped_at": data.get("shipped_at"),
+            "delivered_at": data.get("delivered_at"),
+            "cancelled_at": data.get("cancelled_at")
+        }
+    }
+    
+    return timeline
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -5,26 +5,76 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   fastapi-app:
     image: warehouse-fastapi-app:latest
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     environment:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
     ports:
       - "8000:8000"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   mcp:
     image: warehouse-mcp:latest
     depends_on:
-      - fastapi-app
+      fastapi-app:
+        condition: service_healthy
     environment:
       API_BASE_URL: http://fastapi-app:8000
       PYTHONUNBUFFERED: "1"
     restart: unless-stopped
 
+  mesa-simulation:
+    image: warehouse-mesa:latest
+    depends_on:
+      fastapi-app:
+        condition: service_healthy
+    environment:
+      WAREHOUSE_URL: http://fastapi-app:8000
+      PYTHONUNBUFFERED: "1"
+      # Simulation configuration
+      NUM_CUSTOMERS: "5"
+      NUM_FULFILLMENT_AGENTS: "2"
+      SIMULATION_MODE: "server"  # or "headless"
+    ports:
+      - "8521:8521"
+    restart: unless-stopped
+    command: ["python", "warehouse_simulation.py", "server"]
+
+  # Optional: Headless simulation service (disabled by default)
+  mesa-headless:
+    image: warehouse-mesa:latest
+    depends_on:
+      fastapi-app:
+        condition: service_healthy
+    environment:
+      WAREHOUSE_URL: http://fastapi-app:8000
+      PYTHONUNBUFFERED: "1"
+      NUM_CUSTOMERS: "10"
+      NUM_FULFILLMENT_AGENTS: "3"
+      MAX_STEPS: "1000"
+    command: ["python", "warehouse_simulation.py"]
+    restart: "no"  # Run once and stop
+    profiles:
+      - headless  # Only start with: docker-compose --profile headless up
+
 volumes:
   redis_data:
+
+networks:
+  default:
+    name: warehouse-network

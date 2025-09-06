@@ -1,0 +1,19 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+ENV PYTHONUNBUFFERED=1
+
+# Install Mesa requirements
+COPY requirements-mesa.txt .
+RUN pip install --no-cache-dir -r requirements-mesa.txt
+
+# Copy simulation files
+COPY warehouse_client.py .
+COPY warehouse_simulation.py .
+
+# Expose port for Mesa visualization server
+EXPOSE 8521
+
+# Default to running the visualization server
+# Can be overridden in docker-compose for headless mode
+CMD ["python", "warehouse_simulation.py", "server"]

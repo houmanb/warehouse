@@ -191,45 +191,68 @@ async def handle_list_tools() -> List[types.Tool]:
             }
         ),
         
-        # Order Tools (existing)
+        # Enhanced Order Tools with Complete Timeline Support
         types.Tool(
             name="create_order",
-            description="Create a new warehouse order",
+            description="Create a new warehouse order with timestamp tracking",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "customer_name": {"type": "string", "description": "Name of the customer"},
-                    "items": {"type": "array", "items": {"type": "string"}, "description": "List of items"}
+                    "items": {"type": "array", "items": {"type": "string"}, "description": "List of items"},
+                    "notes": {"type": "string", "description": "Optional order notes"}
                 },
                 "required": ["customer_name", "items"]
             }
         ),
         types.Tool(
             name="get_order",
-            description="Get a specific order by ID",
+            description="Get a specific order by ID with full timestamp details",
             inputSchema={"type": "object", "properties": {"order_id": {"type": "integer"}}, "required": ["order_id"]}
         ),
         types.Tool(
             name="list_orders", 
-            description="List all orders. Use 'details=true' parameter to get full item details.",
+            description="List all orders with timestamp information",
             inputSchema={
                 "type": "object", 
                 "properties": {
-                    "details": {"type": "boolean", "description": "Include full item details instead of just counts"}
+                    "details": {"type": "boolean", "description": "Include full item details and timestamps"}
                 }
             }
         ),
         types.Tool(
             name="update_order",
-            description="Update an existing order",
+            description="Update an existing order and track status changes",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "order_id": {"type": "integer"},
                     "customer_name": {"type": "string"},
                     "items": {"type": "array", "items": {"type": "string"}},
-                    "status": {"type": "string"}
+                    "status": {"type": "string", "description": "Order status: pending, confirmed, picking, packed, shipped, delivered, cancelled"},
+                    "notes": {"type": "string", "description": "Notes about the status change"}
                 },
+                "required": ["order_id"]
+            }
+        ),
+        types.Tool(
+            name="advance_order",
+            description="Advance order to next status in fulfillment workflow",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "order_id": {"type": "integer"},
+                    "notes": {"type": "string", "description": "Optional notes about the advancement"}
+                },
+                "required": ["order_id"]
+            }
+        ),
+        types.Tool(
+            name="get_order_timeline",
+            description="Get detailed timeline of order status changes and fulfillment timestamps",
+            inputSchema={
+                "type": "object",
+                "properties": {"order_id": {"type": "integer"}},
                 "required": ["order_id"]
             }
         ),
@@ -248,6 +271,18 @@ async def handle_list_prompts() -> List[types.Prompt]:
 @server.list_resources()
 async def handle_list_resources() -> List[types.Resource]:
     return []
+
+def format_timestamp(ts_str):
+    """Format timestamp for display"""
+    if not ts_str:
+        return "Not set"
+    try:
+        # Parse ISO format and return a readable format
+        from datetime import datetime
+        dt = datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
+        return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+    except:
+        return ts_str
 
 @server.call_tool()
 async def handle_call_tool(name: str, arguments: dict) -> List[types.TextContent]:
@@ -453,14 +488,35 @@ async def handle_call_tool(name: str, arguments: dict) -> List[types.TextContent
                 resp.raise_for_status()
                 return [types.TextContent(type="text", text=f"🧹 Customer {cid}'s basket cleared")]
 
-            # Original order operations
+            # Enhanced Order operations with complete timeline support
             elif name == "create_order":
-                payload = {"customer_name": arguments["customer_name"], "items": arguments["items"]}
+                payload = {
+                    "customer_name": arguments["customer_name"], 
+                    "items": arguments["items"],
+                    "notes": arguments.get("notes")
+                }
                 resp = await client.post("/orders", json=payload)
                 resp.raise_for_status()
                 data = resp.json()
-                return [types.TextContent(type="text",
-                    text=f"✅ Order created\nID: {data['order_id']}\nCustomer: {data['customer_name']}\nItems: {', '.join(data['items'])}\nStatus: {data['status']}")]
+                
+                # Enhanced response with comprehensive timestamp information
+                lines = [
+                    f"✅ Order created successfully",
+                    f"📋 Order ID: {data['order_id']}",
+                    f"👤 Customer: {data['customer_name']}",
+                    f"📦 Items: {', '.join(data['items'])}",
+                    f"📊 Status: {data['status']}",
+                    f"🕐 Created: {format_timestamp(data['created_at'])}",
+                    f"🕐 Placed: {format_timestamp(data.get('placed_at'))}"
+                ]
+                if data.get('notes'):
+                    lines.append(f"📝 Notes: {data['notes']}")
+                
+                # Show initial status history
+                if data.get('status_history'):
+                    lines.append(f"\n📜 Status History: {len(data['status_history'])} entries")
+                
+                return [types.TextContent(type="text", text="\n".join(lines))]
 
             elif name == "get_order":
                 oid = arguments["order_id"]
@@ -469,48 +525,229 @@ async def handle_call_tool(name: str, arguments: dict) -> List[types.TextContent
                     return [types.TextContent(type="text", text=f"❌ Order {oid} not found")]
                 resp.raise_for_status()
                 d = resp.json()
-                return [types.TextContent(type="text",
-                    text=f"📋 Order {d['order_id']}\nCustomer: {d['customer_name']}\nItems: {', '.join(d['items'])}\nStatus: {d['status']}")]
+                
+                # Comprehensive order details with all timestamp information
+                lines = [
+                    f"📋 Order {d['order_id']} Details",
+                    f"👤 Customer: {d['customer_name']}",
+                    f"📦 Items: {', '.join(d['items'])}",
+                    f"📊 Current Status: {d['status']}",
+                    "",
+                    "🕐 Fulfillment Timeline:"
+                ]
+                
+                # Add fulfillment timestamps with better formatting
+                timestamp_fields = [
+                    ("placed_at", "📅 Order Placed"),
+                    ("confirmed_at", "✅ Confirmed"),
+                    ("picked_at", "🔍 Picked"),
+                    ("packed_at", "📦 Packed"),
+                    ("shipped_at", "🚚 Shipped"),
+                    ("delivered_at", "🏠 Delivered"),
+                    ("cancelled_at", "❌ Cancelled")
+                ]
+                
+                for field, label in timestamp_fields:
+                    if d.get(field):
+                        lines.append(f"  {label}: {format_timestamp(d[field])}")
+                
+                if d.get('notes'):
+                    lines.append(f"\n📝 Notes: {d['notes']}")
+                
+                # Add comprehensive status history
+                if d.get('status_history'):
+                    lines.append(f"\n📜 Status History ({len(d['status_history'])} changes):")
+                    for i, history in enumerate(d['status_history'][-3:], 1):  # Show last 3 changes
+                        lines.append(f"  {i}. {history['status']} - {format_timestamp(history['timestamp'])}")
+                        if history.get('notes'):
+                            lines.append(f"     📝 {history['notes']}")
+                    if len(d['status_history']) > 3:
+                        lines.append(f"     ... and {len(d['status_history']) - 3} more changes")
+                
+                return [types.TextContent(type="text", text="\n".join(lines))]
 
             elif name == "list_orders":
                 resp = await client.get("/orders")
                 resp.raise_for_status()
                 rows = resp.json()
                 if not rows:
-                    return [types.TextContent(type="text", text="🔭 No orders found")]
+                    return [types.TextContent(type="text", text="📊 No orders found")]
                 
-                # Check if detailed view is requested
                 show_details = arguments.get("details", False)
                 
                 if show_details:
-                    # Return detailed format with item names
-                    lines = []
+                    # Detailed view with comprehensive timestamps
+                    lines = [f"📊 All Orders ({len(rows)} total) - Detailed Timeline View:\n"]
                     for d in rows:
-                        status_emoji = {"pending": "⏳", "shipped": "🚚", "cancelled": "❌"}.get(d["status"], "❓")
+                        status_emoji = {
+                            "pending": "⏳", "confirmed": "✅", "picking": "🔍", 
+                            "packed": "📦", "shipped": "🚚", "delivered": "🏠", 
+                            "cancelled": "❌"
+                        }.get(d["status"], "❓")
+                        
                         items_str = ', '.join(d['items']) if d.get('items') else 'No items'
-                        lines.append(f"{status_emoji} Order {d['order_id']}: {d['customer_name']} - Items: {items_str} - {d['status']}")
-                    return [types.TextContent(type="text", text=f"📊 All Orders ({len(rows)} total) - Detailed View:\n\n" + "\n".join(lines))]
+                        created = format_timestamp(d.get('created_at', ''))
+                        
+                        lines.append(f"{status_emoji} Order {d['order_id']}: {d['customer_name']}")
+                        lines.append(f"   📦 Items: {items_str}")
+                        lines.append(f"   📊 Status: {d['status']}")
+                        lines.append(f"   🕐 Created: {created}")
+                        
+                        # Show latest status change timestamp
+                        latest_status_time = d.get(f"{d['status']}_at")
+                        if latest_status_time:
+                            lines.append(f"   🕐 {d['status'].title()}: {format_timestamp(latest_status_time)}")
+                        
+                        if d.get('notes'):
+                            lines.append(f"   📝 Notes: {d['notes']}")
+                        lines.append("")
+                        
+                    return [types.TextContent(type="text", text="\n".join(lines))]
                 else:
-                    # Return summary format with item counts
+                    # Summary view with status indicators
                     lines = []
                     for d in rows:
-                        status_emoji = {"pending": "⏳", "shipped": "🚚", "cancelled": "❌"}.get(d["status"], "❓")
-                        lines.append(f"{status_emoji} Order {d['order_id']}: {d['customer_name']} - {len(d['items'])} items - {d['status']}")
+                        status_emoji = {
+                            "pending": "⏳", "confirmed": "✅", "picking": "🔍", 
+                            "packed": "📦", "shipped": "🚚", "delivered": "🏠", 
+                            "cancelled": "❌"
+                        }.get(d["status"], "❓")
+                        
+                        created_time = format_timestamp(d.get('created_at', ''))
+                        lines.append(f"{status_emoji} Order {d['order_id']}: {d['customer_name']} - {len(d['items'])} items - {d['status']} ({created_time})")
+                        
                     return [types.TextContent(type="text", text=f"📊 All Orders ({len(rows)} total):\n\n" + "\n".join(lines))]
 
             elif name == "update_order":
                 oid = arguments["order_id"]
                 payload = {}
-                if "customer_name" in arguments: payload["customer_name"] = arguments["customer_name"]
-                if "items" in arguments: payload["items"] = arguments["items"]
-                if "status" in arguments: payload["status"] = arguments["status"]
+                if "customer_name" in arguments: 
+                    payload["customer_name"] = arguments["customer_name"]
+                if "items" in arguments: 
+                    payload["items"] = arguments["items"]
+                if "status" in arguments: 
+                    payload["status"] = arguments["status"]
+                if "notes" in arguments:
+                    payload["notes"] = arguments["notes"]
+                
                 resp = await client.patch(f"/orders/{oid}", json=payload)
                 if resp.status_code == 404:
                     return [types.TextContent(type="text", text=f"❌ Order {oid} not found")]
                 resp.raise_for_status()
                 d = resp.json()
-                pieces = [f"👤 Customer: {d['customer_name']}", f"📦 Items: {', '.join(d['items'])}", f"🛈 Status: {d['status']}"]
-                return [types.TextContent(type="text", text=f"✅ Order {oid} updated\n" + "\n".join(pieces))]
+                
+                lines = [
+                    f"✅ Order {oid} updated successfully",
+                    f"👤 Customer: {d['customer_name']}",
+                    f"📦 Items: {', '.join(d['items'])}",
+                    f"📊 Status: {d['status']}",
+                    f"🕐 Updated: {format_timestamp(d['updated_at'])}"
+                ]
+                
+                # Show status-specific timestamp if available
+                status_timestamp_field = f"{d['status']}_at"
+                if d.get(status_timestamp_field):
+                    lines.append(f"🕐 {d['status'].title()}: {format_timestamp(d[status_timestamp_field])}")
+                
+                return [types.TextContent(type="text", text="\n".join(lines))]
+
+            elif name == "advance_order":
+                oid = arguments["order_id"]
+                notes = arguments.get("notes")
+                
+                # Build request with optional notes
+                params = {}
+                if notes:
+                    params["notes"] = notes
+                
+                resp = await client.post(f"/orders/{oid}/advance", params=params)
+                if resp.status_code == 404:
+                    return [types.TextContent(type="text", text=f"❌ Order {oid} not found")]
+                if resp.status_code == 400:
+                    error_detail = resp.json().get("detail", "Cannot advance order")
+                    return [types.TextContent(type="text", text=f"❌ {error_detail}")]
+                resp.raise_for_status()
+                
+                result = resp.json()
+                order_data = result["order"]
+                
+                lines = [
+                    f"🚀 {result['message']}",
+                    f"📋 Order {oid} Details:",
+                    f"👤 Customer: {order_data['customer_name']}",
+                    f"📊 New Status: {order_data['status']}",
+                    f"🕐 Updated: {format_timestamp(order_data['updated_at'])}"
+                ]
+                
+                # Show status-specific timestamp
+                status_timestamp_field = f"{order_data['status']}_at"
+                if order_data.get(status_timestamp_field):
+                    status_label = {
+                        "confirmed_at": "✅ Confirmed",
+                        "picked_at": "🔍 Picked", 
+                        "packed_at": "📦 Packed",
+                        "shipped_at": "🚚 Shipped",
+                        "delivered_at": "🏠 Delivered"
+                    }.get(status_timestamp_field, f"🕐 {order_data['status'].title()}")
+                    lines.append(f"{status_label}: {format_timestamp(order_data[status_timestamp_field])}")
+                
+                return [types.TextContent(type="text", text="\n".join(lines))]
+
+            elif name == "get_order_timeline":
+                oid = arguments["order_id"]
+                resp = await client.get(f"/orders/{oid}/timeline")
+                if resp.status_code == 404:
+                    return [types.TextContent(type="text", text=f"❌ Order {oid} not found")]
+                resp.raise_for_status()
+                
+                timeline = resp.json()
+                
+                lines = [
+                    f"📅 Order {timeline['order_id']} Complete Timeline",
+                    f"👤 Customer: {timeline['customer_name']}",
+                    f"📊 Current Status: {timeline['current_status']}",
+                    f"🕐 Created: {format_timestamp(timeline['created_at'])}",
+                    "",
+                    "🕐 Fulfillment Timeline:"
+                ]
+                
+                # Show all fulfillment timestamps in order
+                fulfillment = timeline['fulfillment_timestamps']
+                timestamp_labels = [
+                    ("placed_at", "📅 Order Placed"),
+                    ("confirmed_at", "✅ Order Confirmed"),
+                    ("picked_at", "🔍 Items Picked"),
+                    ("packed_at", "📦 Items Packed"),
+                    ("shipped_at", "🚚 Package Shipped"),
+                    ("delivered_at", "🏠 Order Delivered"),
+                    ("cancelled_at", "❌ Order Cancelled")
+                ]
+                
+                completed_steps = 0
+                for field, label in timestamp_labels:
+                    if fulfillment.get(field):
+                        lines.append(f"  {label}: {format_timestamp(fulfillment[field])}")
+                        completed_steps += 1
+                    elif field != "cancelled_at":  # Don't show "not set" for cancelled
+                        lines.append(f"  {label}: Not completed")
+                
+                lines.append(f"\n📊 Progress: {completed_steps}/{len(timestamp_labels)-1} steps completed")
+                
+                # Show comprehensive status change history
+                if timeline['status_changes']:
+                    lines.append(f"\n📜 Complete Status Change History ({len(timeline['status_changes'])} changes):")
+                    for i, change in enumerate(timeline['status_changes'], 1):
+                        emoji = {
+                            "pending": "⏳", "confirmed": "✅", "picking": "🔍",
+                            "packed": "📦", "shipped": "🚚", "delivered": "🏠", 
+                            "cancelled": "❌"
+                        }.get(change['status'], "🔄")
+                        
+                        lines.append(f"  {i}. {emoji} {change['status'].upper()} - {format_timestamp(change['timestamp'])}")
+                        if change.get('notes'):
+                            lines.append(f"     💬 {change['notes']}")
+                
+                return [types.TextContent(type="text", text="\n".join(lines))]
 
             elif name == "delete_order":
                 oid = arguments["order_id"]
@@ -518,7 +755,7 @@ async def handle_call_tool(name: str, arguments: dict) -> List[types.TextContent
                 if resp.status_code == 404:
                     return [types.TextContent(type="text", text=f"❌ Order {oid} not found")]
                 resp.raise_for_status()
-                return [types.TextContent(type="text", text=f"🗑️ Order {oid} deleted")]
+                return [types.TextContent(type="text", text=f"🗑️ Order {oid} deleted and marked as cancelled")]
 
             else:
                 return [types.TextContent(type="text", text=f"❌ Unknown tool: {name}")]
@@ -533,7 +770,7 @@ async def main():
             write_stream,
             InitializationOptions(
                 server_name="warehouse-mcp",
-                server_version="2.0.0",
+                server_version="2.1.0",
                 capabilities=server.get_capabilities(notification_options=NotificationOptions(), experimental_capabilities={}),
             ),
         )

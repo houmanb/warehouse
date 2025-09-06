@@ -1,0 +1,22 @@
+# Warehouse Agent Simulation Requirements
+
+# Mesa Agent-Based Modeling Framework
+mesa>=2.1.0
+
+# Web framework for visualization server
+tornado>=6.2
+
+# Data visualization and analysis
+matplotlib>=3.6.0
+numpy>=1.21.0
+pandas>=1.5.0
+
+# HTTP client for warehouse API
+requests>=2.28.0
+
+# Development and testing
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+
+# Logging and utilities
+colorlog>=6.7.0

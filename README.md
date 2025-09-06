@@ -1,268 +1,387 @@
-# Warehouse Management System with MCP Integration
+# Enhanced Warehouse Management System with Order Timeline Tracking
 
-A comprehensive warehouse and inventory management system built with FastAPI, Redis, and Docker. Features a Model Context Protocol (MCP) server for AI-driven conversational interfaces to all warehouse operations.
+A comprehensive warehouse and inventory management system built with FastAPI, Redis, and Docker. Features advanced order tracking with complete timestamp audit trails and fulfillment workflow management through a Model Context Protocol (MCP) server for AI-driven conversational interfaces.
+
+## 🆕 New Features: Order Timeline Tracking
+
+### Advanced Order Management
+- **Complete Timestamp Tracking**: Every order state change is recorded with precise timestamps
+- **Fulfillment Workflow**: Automated progression through order statuses (pending → confirmed → picking → packed → shipped → delivered)
+- **Status History**: Full audit trail of all status changes with optional notes
+- **Workflow Automation**: Simple advancement through predefined fulfillment stages
+- **Timeline API**: Dedicated endpoints for viewing complete order timelines
+
+### Order Status Workflow
+```
+📅 Pending → ✅ Confirmed → 🔍 Picking → 📦 Packed → 🚚 Shipped → ✅ Delivered
+                                                              ↓
+                                                         ❌ Cancelled (any stage)
+```
+
+Each status change automatically records:
+- **Timestamp**: Precise ISO 8601 datetime
+- **Status Change**: From/to status tracking
+- **Notes**: Optional context about the change
+- **Fulfillment Milestone**: Specific workflow timestamps
 
 ## Architecture
 
-- **FastAPI Backend** (`app.py`): REST API with comprehensive business logic
-- **Redis Database**: High-performance data storage with hash-based entity management  
-- **MCP Server** (`mcp_server.py`): JSON-RPC interface for AI assistant integration
+- **FastAPI Backend** (`app.py`): Enhanced REST API with timestamp tracking
+- **Redis Database**: High-performance data storage with order history management  
+- **MCP Server** (`mcp_server.py`): AI-friendly JSON-RPC interface with timeline support
 - **Docker Containerization**: Multi-service deployment with orchestration
 
-## Features
+## Enhanced API Reference
 
-### Complete Business Entity Management
-- **Customer Management**: Full lifecycle with contact information and soft delete
-- **Category Hierarchy**: Product organization and classification
-- **Inventory Control**: SKU tracking, pricing, stock levels with validation
-- **Shopping Baskets**: Persistent cart functionality with automatic quantity management
-- **Order Processing**: Status tracking and customer assignment
+### Order Operations with Timestamps
 
-### Advanced Functionality
-- **Automatic Data Initialization**: Sample categories and products on startup
-- **Constraint Validation**: Email uniqueness, SKU validation, category references
-- **Soft Delete Patterns**: Customer deactivation without data loss
-- **Quantity Aggregation**: Smart basket updates for existing items
-- **Error Handling**: Comprehensive HTTP status codes and validation messages
+#### Create Order (Enhanced)
+```http
+POST /orders
+Content-Type: application/json
 
-## Installation
-
-### Quick Start
-```bash
-# Complete system initialization
-./init.sh
-```
-
-### Manual Setup
-```bash
-# Build Docker images
-./build.sh
-
-# Start all services
-docker compose -p warehouse up -d
-
-# View logs
-docker compose -p warehouse logs -f
-
-# Stop services
-docker compose -p warehouse down
-```
-
-## API Reference
-
-### Customer Operations
-```
-POST   /customers              - Create customer
-GET    /customers/{id}         - Get customer by ID
-GET    /customers              - List all customers
-PATCH  /customers/{id}         - Update customer
-DELETE /customers/{id}         - Soft delete customer
-```
-
-### Category Operations
-```
-POST   /categories             - Create category
-GET    /categories/{id}        - Get category by ID
-GET    /categories             - List all categories
-```
-
-### Item Operations
-```
-POST   /items                  - Create item
-GET    /items/{id}             - Get item by ID
-GET    /items                  - List active items
-PATCH  /items/{id}             - Update item
-```
-
-### Basket Operations
-```
-POST   /baskets/{customer_id}/items        - Add item to basket
-GET    /baskets/{customer_id}              - Get basket contents
-DELETE /baskets/{customer_id}/items/{id}   - Remove item from basket
-DELETE /baskets/{customer_id}              - Clear entire basket
-```
-
-### Order Operations
-```
-POST   /orders                 - Create order
-GET    /orders/{id}            - Get order by ID
-GET    /orders                 - List all orders
-PATCH  /orders/{id}            - Update order
-DELETE /orders/{id}            - Delete order
-```
-
-## MCP Server Integration
-
-The MCP server provides conversational AI interfaces to all warehouse operations:
-
-### Customer Functions
-- `create_customer(name, email, phone?, address?)`
-- `get_customer(customer_id)`
-- `list_customers()`
-- `update_customer(customer_id, ...)`
-- `delete_customer(customer_id)`
-
-### Inventory Functions
-- `create_category(name, description?)`
-- `get_category(category_id)`
-- `list_categories()`
-- `create_item(name, price, stock_quantity, category_id, sku, description?)`
-- `get_item(item_id)`
-- `list_items()`
-- `update_item(item_id, ...)`
-
-### Shopping Functions
-- `add_to_basket(customer_id, item_id, quantity)`
-- `get_basket(customer_id)`
-- `remove_from_basket(customer_id, item_id)`
-- `clear_basket(customer_id)`
-
-### Order Functions
-- `create_order(customer_name, items[])`
-- `get_order(order_id)`
-- `list_orders(details?)`
-- `update_order(order_id, ...)`
-- `delete_order(order_id)`
-
-## Usage Examples
-
-### Natural Language Operations
-```
-"Create a customer named Alice Smith with email alice@company.com"
-"Add 50 wireless headphones to Electronics category, SKU WH-2024, price $79.99"
-"Add 2 headphones to Alice's basket"
-"Show me Alice's current basket total"
-"Create an order for Alice with her current basket items"
-```
-
-### Shopping Workflow
-1. **Create Customer**: Register new customer with contact details
-2. **Browse Catalog**: List available items by category
-3. **Add to Basket**: Build shopping cart with quantity management
-4. **Review Basket**: View itemized totals and pricing
-5. **Place Order**: Convert basket to order or create direct order
-6. **Track Status**: Monitor order processing states
-
-## Data Model
-
-### Customer Entity
-```json
 {
-  "customer_id": 1,
-  "name": "John Doe",
-  "email": "john@example.com",
-  "phone": "555-0123",
-  "address": "123 Main St",
-  "created_at": "2024-01-01T00:00:00",
-  "is_active": true
+  "customer_name": "John Doe",
+  "items": ["Laptop", "Mouse", "Keyboard"],
+  "notes": "Urgent order - customer requested expedited processing"
 }
 ```
 
-### Item Entity
-```json
-{
-  "item_id": 1,
-  "name": "Wireless Headphones",
-  "description": "Premium wireless headphones",
-  "price": 99.99,
-  "stock_quantity": 50,
-  "category_id": 1,
-  "sku": "WH-001",
-  "is_active": true,
-  "created_at": "2024-01-01T00:00:00"
-}
+**Response includes:**
+- `created_at`: Order creation timestamp
+- `placed_at`: When order was initially placed
+- `status_history`: Array of status changes
+- All fulfillment workflow timestamps
+
+#### Get Order Timeline
+```http
+GET /orders/{order_id}/timeline
 ```
 
-### Basket Entity
+**Returns comprehensive timeline:**
 ```json
 {
-  "basket_id": 1,
-  "customer_id": 1,
-  "items": [
+  "order_id": 123,
+  "customer_name": "John Doe",
+  "current_status": "shipped",
+  "created_at": "2024-01-01T10:00:00Z",
+  "status_changes": [
     {
-      "item_id": 1,
-      "item_name": "Wireless Headphones",
-      "quantity": 2,
-      "unit_price": 99.99,
-      "total_price": 199.98
+      "status": "pending",
+      "timestamp": "2024-01-01T10:00:00Z",
+      "notes": "Order created"
+    },
+    {
+      "status": "confirmed",
+      "timestamp": "2024-01-01T10:15:00Z",
+      "notes": "Order confirmed by warehouse team"
     }
   ],
-  "total_amount": 199.98,
-  "created_at": "2024-01-01T00:00:00",
-  "updated_at": "2024-01-01T01:00:00"
+  "fulfillment_timestamps": {
+    "placed_at": "2024-01-01T10:00:00Z",
+    "confirmed_at": "2024-01-01T10:15:00Z",
+    "picked_at": "2024-01-01T11:30:00Z",
+    "packed_at": "2024-01-01T12:00:00Z",
+    "shipped_at": "2024-01-01T14:00:00Z",
+    "delivered_at": null,
+    "cancelled_at": null
+  }
 }
 ```
 
-## Sample Data
+#### Advance Order Workflow
+```http
+POST /orders/{order_id}/advance?notes=Items%20picked%20from%20shelf%20A-1
+```
 
-The system initializes with:
-- **4 Categories**: Electronics, Clothing, Books, Home & Garden
-- **6 Sample Items**: Laptop, Smartphone, T-Shirt, Jeans, Python Programming Book, Garden Hose
-- **Complete SKU assignments** and realistic pricing
+Automatically advances order to next status:
+- `pending` → `confirmed`
+- `confirmed` → `picking`
+- `picking` → `packed`
+- `packed` → `shipped`
+- `shipped` → `delivered`
+
+#### Update Order Status (Manual)
+```http
+PATCH /orders/{order_id}
+Content-Type: application/json
+
+{
+  "status": "shipped",
+  "notes": "Package shipped via FedEx, tracking: 1234567890"
+}
+```
+
+Manually set status with automatic timestamp tracking.
+
+### Enhanced Order Model
+
+```python
+class OrderOut(BaseModel):
+    order_id: int
+    customer_name: str
+    items: List[str]
+    status: str
+    notes: Optional[str] = None
+    created_at: str
+    updated_at: str
+    status_history: List[OrderStatusHistory]
+    # Fulfillment workflow timestamps
+    placed_at: Optional[str] = None
+    confirmed_at: Optional[str] = None
+    picked_at: Optional[str] = None
+    packed_at: Optional[str] = None
+    shipped_at: Optional[str] = None
+    delivered_at: Optional[str] = None
+    cancelled_at: Optional[str] = None
+
+class OrderStatusHistory(BaseModel):
+    status: str
+    timestamp: str
+    notes: Optional[str] = None
+```
+
+## Enhanced MCP Server Integration
+
+### New Order Timeline Functions
+
+#### Advanced Order Management
+- `create_order(customer_name, items[], notes?)` - Create with notes tracking
+- `get_order(order_id)` - Get with complete timeline details
+- `advance_order(order_id, notes?)` - Advance through workflow
+- `get_order_timeline(order_id)` - Get detailed timeline view
+- `update_order(order_id, status?, notes?, ...)` - Update with change tracking
+
+### Natural Language Examples
+
+```
+"Create an urgent order for Alice with laptop and mouse"
+"Show me the complete timeline for order 123"
+"Advance order 456 to the next stage with note 'items picked'"
+"What's the delivery status of order 789?"
+"Mark order 234 as shipped with tracking number ABC123"
+"List all orders shipped today with full details"
+```
+
+## Installation & Quick Start
+
+### Complete System Setup
+```bash
+# Initialize enhanced system
+./init.sh
+
+# Or manual setup
+./build.sh
+docker compose -p warehouse up -d
+```
+
+### Test Enhanced Functionality
+```bash
+# Run comprehensive test suite including timeline tests
+python test_api.py
+```
+
+## Enhanced Usage Examples
+
+### Complete Order Workflow
+```python
+import requests
+
+base_url = "http://localhost:8000"
+
+# 1. Create order with notes
+order_data = {
+    "customer_name": "Alice Smith",
+    "items": ["Laptop", "Wireless Mouse"],
+    "notes": "Customer requested expedited processing"
+}
+response = requests.post(f"{base_url}/orders", json=order_data)
+order_id = response.json()["order_id"]
+
+# 2. Advance through workflow stages
+stages = [
+    ("Order confirmed by warehouse", "confirmed"),
+    ("Items picked from inventory", "picking"),
+    ("Items packed for shipping", "packed"),
+    ("Package shipped via FedEx", "shipped")
+]
+
+for note, expected_status in stages:
+    response = requests.post(
+        f"{base_url}/orders/{order_id}/advance",
+        params={"notes": note}
+    )
+    print(f"Advanced to: {response.json()['message']}")
+
+# 3. Get complete timeline
+response = requests.get(f"{base_url}/orders/{order_id}/timeline")
+timeline = response.json()
+
+print(f"Order {order_id} Timeline:")
+for change in timeline['status_changes']:
+    print(f"  {change['status']}: {change['timestamp']}")
+    if change['notes']:
+        print(f"    Note: {change['notes']}")
+```
+
+### Timeline Analysis
+```python
+# Get all orders with timestamps
+response = requests.get(f"{base_url}/orders")
+orders = response.json()
+
+# Find orders shipped today
+from datetime import datetime, date
+today = date.today()
+
+shipped_today = []
+for order in orders:
+    if order.get('shipped_at'):
+        ship_date = datetime.fromisoformat(order['shipped_at']).date()
+        if ship_date == today:
+            shipped_today.append(order)
+
+print(f"Orders shipped today: {len(shipped_today)}")
+```
+
+## Data Persistence & Storage
+
+### Order Timeline Storage in Redis
+
+```
+# Order data
+order:123 -> hash {order_id, customer_name, status, created_at, updated_at, ...timestamps}
+
+# Status history (ordered list)
+order_history:123 -> list [
+  {"status": "pending", "timestamp": "...", "notes": "..."},
+  {"status": "confirmed", "timestamp": "...", "notes": "..."}
+]
+
+# Order index
+orders -> set {123, 124, 125, ...}
+```
+
+## Operational Benefits
+
+### Enhanced Visibility
+- **Real-time Tracking**: Know exactly where every order stands
+- **Performance Metrics**: Measure time between workflow stages
+- **Audit Compliance**: Complete change history for accountability
+- **Customer Communication**: Precise delivery estimates based on workflow position
+
+### Process Optimization
+- **Bottleneck Identification**: Find slow stages in fulfillment
+- **SLA Monitoring**: Track against service level agreements
+- **Workflow Efficiency**: Optimize based on historical timing data
+- **Predictive Analytics**: Forecast delivery times using past patterns
+
+## API Response Examples
+
+### Enhanced Order Creation Response
+```json
+{
+  "order_id": 123,
+  "customer_name": "Alice Smith",
+  "items": ["Laptop", "Wireless Mouse"],
+  "status": "pending",
+  "notes": "Customer requested expedited processing",
+  "created_at": "2024-01-01T10:00:00.000Z",
+  "updated_at": "2024-01-01T10:00:00.000Z",
+  "placed_at": "2024-01-01T10:00:00.000Z",
+  "status_history": [
+    {
+      "status": "pending",
+      "timestamp": "2024-01-01T10:00:00.000Z",
+      "notes": "Order created"
+    }
+  ],
+  "confirmed_at": null,
+  "picked_at": null,
+  "packed_at": null,
+  "shipped_at": null,
+  "delivered_at": null,
+  "cancelled_at": null
+}
+```
+
+### Order Advancement Response
+```json
+{
+  "message": "Order advanced to confirmed",
+  "order": {
+    "order_id": 123,
+    "customer_name": "Alice Smith",
+    "items": ["Laptop", "Wireless Mouse"],
+    "status": "confirmed",
+    "notes": "Customer requested expedited processing",
+    "created_at": "2024-01-01T10:00:00.000Z",
+    "updated_at": "2024-01-01T10:15:00.000Z",
+    "placed_at": "2024-01-01T10:00:00.000Z",
+    "confirmed_at": "2024-01-01T10:15:00.000Z",
+    "status_history": [
+      {
+        "status": "pending",
+        "timestamp": "2024-01-01T10:00:00.000Z",
+        "notes": "Order created"
+      },
+      {
+        "status": "confirmed",
+        "timestamp": "2024-01-01T10:15:00.000Z",
+        "notes": "Order confirmed by warehouse team"
+      }
+    ]
+  }
+}
+```
+
+## Testing & Validation
+
+### Comprehensive Test Suite
+The enhanced test suite (`test_api.py`) includes:
+
+- **Timeline Accuracy**: Verify timestamps are recorded correctly
+- **Workflow Progression**: Test automatic status advancement
+- **History Tracking**: Validate status change audit trail
+- **Edge Cases**: Test error conditions and boundary cases
+- **Performance**: Measure API response times with timeline data
+
+### Key Test Scenarios
+1. **Order Lifecycle**: Create → Advance → Complete → Analyze
+2. **Concurrent Orders**: Multiple orders progressing simultaneously  
+3. **Status Rollbacks**: Manual status changes and their tracking
+4. **Timeline Queries**: Retrieve and analyze historical data
+5. **Error Handling**: Invalid transitions and missing orders
 
 ## Configuration
 
 ### Environment Variables
-```
-REDIS_HOST=redis          # Redis server hostname
-REDIS_PORT=6379           # Redis server port
+```bash
+REDIS_HOST=redis              # Redis server hostname
+REDIS_PORT=6379               # Redis server port  
 API_BASE_URL=http://fastapi-app:8000  # MCP server API endpoint
 ```
 
 ### Service Endpoints
 - **FastAPI Application**: http://localhost:8000
-- **API Documentation**: http://localhost:8000/docs
+- **Enhanced API Documentation**: http://localhost:8000/docs
+- **Order Timeline API**: http://localhost:8000/orders/{id}/timeline
 - **Health Check**: http://localhost:8000/health
-- **Redis**: localhost:6379
 
-## Business Logic
+## Migration from Previous Version
 
-### Basket Management
-- **Quantity Aggregation**: Adding existing items increases quantity
-- **Automatic Totaling**: Real-time price calculations with item-level totals
-- **Persistence**: Basket state maintained across sessions
-- **Validation**: Customer and item existence checks
+### Upgrading Existing Orders
+The system automatically handles existing orders:
+- **Legacy orders** get `created_at` timestamps backfilled
+- **Status history** is initialized with current status
+- **Workflow timestamps** start tracking from first status change
+- **No data loss** during upgrade process
 
-### Inventory Control
-- **SKU Uniqueness**: Prevents duplicate stock codes
-- **Category Validation**: Items must reference valid categories
-- **Stock Tracking**: Quantity management with update capabilities
-- **Soft Item Deletion**: Maintains data integrity
-
-### Order Processing
-- **Status Management**: Pending, shipped, cancelled states
-- **Customer Association**: Link orders to customer records
-- **Item Lists**: Flexible item specification and modification
-- **Audit Trail**: Order modification tracking
-
-## Error Handling
-
-The system provides comprehensive error responses:
-- **404 Not Found**: Missing entities with descriptive messages
-- **400 Bad Request**: Validation failures and constraint violations
-- **500 Internal Error**: System failures with logging
-
-## Testing
-
-Run the comprehensive test suite:
-```bash
-python test_api.py
-```
-
-Tests cover:
-- All CRUD operations across entities
-- Basket workflow scenarios
-- Error conditions and edge cases
-- Data validation and constraints
-
-## Integration Benefits
-
-- **Conversational AI Control**: Natural language warehouse management
-- **Enterprise Integration**: REST API for system connectivity
-- **Scalable Architecture**: Docker-based horizontal scaling
-- **Data Persistence**: Redis durability and performance
-- **Type Safety**: Pydantic model validation
-- **Comprehensive Logging**: Operational monitoring and debugging
+### Backward Compatibility
+- All existing API endpoints remain functional
+- Previous order format is still supported
+- Enhanced fields are optional in responses
+- MCP server maintains existing function signatures
 
 ## License
 
@@ -270,4 +389,296 @@ MIT License - see LICENSE file for details
 
 ---
 
-*A practical demonstration of enterprise warehouse management with AI-driven conversational interfaces through MCP protocol integration.*
+*An enterprise-grade warehouse management system with comprehensive order tracking, AI-driven conversational interfaces, and complete audit trails for modern logistics operations.*
+
+# 🚀 Complete Deployment Guide: Enhanced Warehouse System with Order Timeline Tracking
+
+## 📋 **Files to Update**
+
+You need to replace these files in your project directory:
+
+### 1. **Replace `app.py`**
+Use the "Complete Enhanced app.py" artifact above - this includes:
+- ✅ Enhanced order models with timestamps
+- ✅ Status history tracking 
+- ✅ Fulfillment workflow timestamps
+- ✅ New `/orders/{id}/advance` endpoint
+- ✅ New `/orders/{id}/timeline` endpoint
+- ✅ All existing endpoints (customers, categories, items, baskets)
+
+### 2. **Replace `mcp_server.py`**
+Use the "Enhanced MCP Server with Order Timeline Support" artifact above - this includes:
+- ✅ Complete timeline support in MCP responses
+- ✅ Enhanced order advancement with notes
+- ✅ Detailed order timeline queries  
+- ✅ Rich timestamp formatting
+- ✅ Comprehensive status change tracking
+
+## 🔄 **Deployment Steps**
+
+### **Step 1: Update Files**
+```bash
+# Backup your current files (optional but recommended)
+cp app.py app.py.backup
+cp mcp_server.py mcp_server.py.backup
+
+# Replace with the enhanced versions from the artifacts above
+# Copy the complete content from the artifacts into your files
+```
+
+### **Step 2: Deploy Enhanced System**
+```bash
+# Stop current system
+docker compose -p warehouse down
+
+# Clean up old containers and images 
+docker rm -f $(docker ps -aq --filter "name=warehouse") 2>/dev/null || true
+docker rmi warehouse-fastapi-app:latest warehouse-mcp:latest 2>/dev/null || true
+
+# Build new images with enhanced code
+docker build --no-cache -t warehouse-fastapi-app:latest -f Dockerfile.fastapi .
+docker build --no-cache -t warehouse-mcp:latest -f Dockerfile.mcp .
+
+# Start enhanced system
+docker compose -p warehouse up -d
+
+# Wait for startup
+sleep 15
+```
+
+### **Step 3: Verify Deployment**
+```bash
+# Test health endpoint
+curl http://localhost:8000/health
+
+# Test categories endpoint (this was failing before)
+curl http://localhost:8000/categories
+
+# Test enhanced order creation
+curl -X POST "http://localhost:8000/orders" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "customer_name": "Timeline Test Customer",
+    "items": ["Test Product A", "Test Product B"],
+    "notes": "Testing enhanced order timeline functionality"
+  }'
+
+# Get the order ID from the response and test timeline
+# Replace {ORDER_ID} with actual ID from previous response
+curl "http://localhost:8000/orders/{ORDER_ID}/timeline"
+
+# Test order advancement  
+curl -X POST "http://localhost:8000/orders/{ORDER_ID}/advance" \
+  -H "Content-Type: application/json" \
+  -d '{"notes": "Testing workflow advancement"}'
+```
+
+## 🧪 **Testing Enhanced Features**
+
+### **Test Order Workflow Progression**
+```bash
+# Create test order
+ORDER_RESPONSE=$(curl -s -X POST "http://localhost:8000/orders" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "customer_name": "Workflow Test Customer",
+    "items": ["Laptop", "Mouse", "Keyboard"],
+    "notes": "Testing complete workflow progression"
+  }')
+
+# Extract order ID
+ORDER_ID=$(echo "$ORDER_RESPONSE" | jq -r '.order_id')
+echo "Created order: $ORDER_ID"
+
+# Test progression through all stages
+echo "Advancing to confirmed..."
+curl -s -X POST "http://localhost:8000/orders/$ORDER_ID/advance" \
+  -d "notes=Order confirmed by warehouse team"
+
+echo "Advancing to picking..."
+curl -s -X POST "http://localhost:8000/orders/$ORDER_ID/advance" \
+  -d "notes=Items being picked from inventory"
+
+echo "Advancing to packed..."
+curl -s -X POST "http://localhost:8000/orders/$ORDER_ID/advance" \
+  -d "notes=Items packed and ready for shipping"
+
+echo "Advancing to shipped..."
+curl -s -X POST "http://localhost:8000/orders/$ORDER_ID/advance" \
+  -d "notes=Package shipped via FedEx"
+
+# View complete timeline
+echo "Final timeline:"
+curl -s "http://localhost:8000/orders/$ORDER_ID/timeline" | jq .
+```
+
+### **Test MCP Integration**
+If you have the MCP server configured, test these commands:
+```
+"Create an order for Alice with laptop and mouse, note it's urgent"
+"Show me the timeline for order 1"
+"Advance order 1 to the next stage"
+"What's the status of all orders with details?"
+"Get the complete timeline for order 1"
+```
+
+## 📊 **New API Endpoints Available**
+
+### **Enhanced Order Endpoints**
+
+#### Create Order with Notes
+```http
+POST /orders
+{
+  "customer_name": "John Doe",
+  "items": ["Laptop", "Mouse"],
+  "notes": "Customer requested expedited processing"
+}
+```
+
+#### Get Order with Timeline
+```http
+GET /orders/{id}
+# Returns complete order with all timestamps and status history
+```
+
+#### Get Order Timeline
+```http
+GET /orders/{id}/timeline
+# Returns detailed timeline view with fulfillment timestamps
+```
+
+#### Advance Order Workflow
+```http
+POST /orders/{id}/advance?notes=Items%20picked%20from%20inventory
+# Automatically advances to next status in workflow
+```
+
+#### Manual Status Update
+```http
+PATCH /orders/{id}
+{
+  "status": "shipped",
+  "notes": "Package shipped via FedEx, tracking: 123456"
+}
+```
+
+## 🎯 **Expected Behavior After Update**
+
+### **Fixed Issues**
+- ✅ **404 errors on `/categories` endpoint** - Now properly implemented
+- ✅ **Missing order timeline functionality** - Complete timeline tracking
+- ✅ **No status change history** - Full audit trail with notes
+- ✅ **Manual workflow management** - Automated progression available
+
+### **New Capabilities**
+- 🕐 **Complete timestamp tracking** for every order state change
+- 📜 **Status change history** with optional notes for context
+- 🚀 **Automated workflow progression** through fulfillment stages
+- 📊 **Timeline analysis** for performance monitoring
+- 💬 **Enhanced MCP responses** with rich timestamp information
+
+### **Workflow Progression**
+```
+📅 Pending (placed_at)
+    ↓ advance_order()
+✅ Confirmed (confirmed_at)  
+    ↓ advance_order()
+🔍 Picking (picked_at)
+    ↓ advance_order()
+📦 Packed (packed_at)
+    ↓ advance_order()
+🚚 Shipped (shipped_at)
+    ↓ advance_order()
+🏠 Delivered (delivered_at)
+```
+
+### **Sample Timeline Response**
+```json
+{
+  "order_id": 123,
+  "customer_name": "Alice Smith",
+  "current_status": "shipped",
+  "created_at": "2024-01-01T10:00:00Z",
+  "status_changes": [
+    {
+      "status": "pending",
+      "timestamp": "2024-01-01T10:00:00Z",
+      "notes": "Order created"
+    },
+    {
+      "status": "confirmed", 
+      "timestamp": "2024-01-01T10:15:00Z",
+      "notes": "Order confirmed by warehouse team"
+    },
+    {
+      "status": "shipped",
+      "timestamp": "2024-01-01T14:00:00Z", 
+      "notes": "Package shipped via FedEx"
+    }
+  ],
+  "fulfillment_timestamps": {
+    "placed_at": "2024-01-01T10:00:00Z",
+    "confirmed_at": "2024-01-01T10:15:00Z", 
+    "picked_at": "2024-01-01T11:30:00Z",
+    "packed_at": "2024-01-01T12:00:00Z",
+    "shipped_at": "2024-01-01T14:00:00Z",
+    "delivered_at": null,
+    "cancelled_at": null
+  }
+}
+```
+
+## 🔧 **Troubleshooting**
+
+### **If Categories Still Return 404**
+```bash
+# Check if sample data initialized
+curl http://localhost:8000/categories
+
+# If empty, restart containers to trigger initialization
+docker compose -p warehouse restart
+
+# Check logs for any errors
+docker compose -p warehouse logs fastapi-app
+```
+
+### **If Timeline Endpoints Don't Work**
+```bash
+# Verify the enhanced app.py is deployed
+docker compose -p warehouse logs fastapi-app | grep "Enhanced Warehouse API"
+
+# Should see: "Enhanced Warehouse API version 2.1.0"
+```
+
+### **If MCP Server Issues**
+```bash
+# Check MCP server logs
+docker compose -p warehouse logs mcp
+
+# Restart MCP container specifically
+docker compose -p warehouse restart mcp
+```
+
+## 🎉 **Success Indicators**
+
+You'll know the deployment worked when:
+
+- ✅ `GET /categories` returns sample categories (not 404)
+- ✅ `POST /orders` creates orders with timestamps
+- ✅ `GET /orders/{id}/timeline` returns detailed timeline
+- ✅ `POST /orders/{id}/advance` progresses workflow
+- ✅ MCP server responds with enhanced timeline information
+- ✅ API documentation shows version 2.1.0 at `/docs`
+
+## 📈 **Performance & Benefits**
+
+The enhanced system provides:
+
+- **Operational Visibility**: Real-time order status tracking
+- **Process Analytics**: Measure time between fulfillment stages  
+- **Audit Compliance**: Complete change history for accountability
+- **Customer Service**: Precise status updates and delivery estimates
+- **AI Integration**: Rich conversational interfaces via MCP
+
+Your warehouse system is now enterprise-ready with comprehensive order timeline tracking and automated workflow management!
