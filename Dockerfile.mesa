@@ -1,19 +1,36 @@
 FROM python:3.11-slim
 
+# System deps: curl for healthchecks, tini for init
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl tini ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
-ENV PYTHONUNBUFFERED=1
 
-# Install Mesa requirements
+# Environment
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    IN_DOCKER=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# Python deps
 COPY requirements-mesa.txt .
-RUN pip install --no-cache-dir -r requirements-mesa.txt
+RUN python -m pip install --upgrade pip \
+ && pip install --no-cache-dir -v -r requirements-mesa.txt
 
-# Copy simulation files
+# App code
 COPY warehouse_client.py .
 COPY warehouse_simulation.py .
 
-# Expose port for Mesa visualization server
+# Non-root user
+RUN useradd -m appuser
+USER appuser
+
+# Expose Solara/Mesa UI port
 EXPOSE 8521
 
-# Default to running the visualization server
-# Can be overridden in docker-compose for headless mode
+# Use tini as entrypoint
+ENTRYPOINT ["/usr/bin/tini", "--"]
+
+# Default to visualization server
 CMD ["python", "warehouse_simulation.py", "server"]

@@ -6,10 +6,11 @@ services:
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   fastapi-app:
     image: warehouse-fastapi-app:latest
@@ -19,14 +20,16 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
+      TZ: Europe/Vienna
     ports:
       - "8000:8000"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 10s
 
   mcp:
     image: warehouse-mcp:latest
@@ -36,7 +39,8 @@ services:
     environment:
       API_BASE_URL: http://fastapi-app:8000
       PYTHONUNBUFFERED: "1"
-    restart: unless-stopped
+      TZ: Europe/Vienna
+    restart: "no"
 
   mesa-simulation:
     image: warehouse-mesa:latest
@@ -46,16 +50,25 @@ services:
     environment:
       WAREHOUSE_URL: http://fastapi-app:8000
       PYTHONUNBUFFERED: "1"
-      # Simulation configuration
+      IN_DOCKER: "1"
+      TZ: Europe/Vienna
       NUM_CUSTOMERS: "5"
       NUM_FULFILLMENT_AGENTS: "2"
-      SIMULATION_MODE: "server"  # or "headless"
+      SOLARA_ASSETS_PROXY: "False"
+      TINI_SUBREAPER: "1"
     ports:
       - "8521:8521"
     restart: unless-stopped
-    command: ["python", "warehouse_simulation.py", "server"]
+    command: ["/usr/bin/tini", "--", "python", "warehouse_simulation.py", "server"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8521/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    init: true
+    stop_grace_period: 15s
 
-  # Optional: Headless simulation service (disabled by default)
   mesa-headless:
     image: warehouse-mesa:latest
     depends_on:
@@ -64,13 +77,18 @@ services:
     environment:
       WAREHOUSE_URL: http://fastapi-app:8000
       PYTHONUNBUFFERED: "1"
+      IN_DOCKER: "1"
+      TZ: Europe/Vienna
       NUM_CUSTOMERS: "10"
       NUM_FULFILLMENT_AGENTS: "3"
       MAX_STEPS: "1000"
-    command: ["python", "warehouse_simulation.py"]
-    restart: "no"  # Run once and stop
+      SOLARA_ASSETS_PROXY: "False"
+      TINI_SUBREAPER: "1"
+    command: ["/usr/bin/tini", "--", "python", "warehouse_simulation.py"]
+    restart: "no"
     profiles:
-      - headless  # Only start with: docker-compose --profile headless up
+      - headless
+    init: true
 
 volumes:
   redis_data:
