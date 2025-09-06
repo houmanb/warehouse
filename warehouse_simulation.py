@@ -235,6 +235,10 @@ class FulfillmentAgent(mesa.Agent):
                                 self.orders_by_status[new_status] += 1
 
                             self.model.total_orders_processed += 1
+                            
+                            # FIXED: Track completed orders separately
+                            if new_status == "delivered":
+                                self.model.total_orders_completed += 1
 
                             logger.info(
                                 f"{self.name}: Advanced order #{order_id} from {status} to {new_status}"
@@ -257,9 +261,10 @@ class WarehouseModel(mesa.Model):
         super().__init__(seed=seed)  # REQUIRED in Mesa 3.x
         self.config = config or SimulationConfig()
 
-        # Model statistics
+        # Model statistics - FIXED: Added total_orders_completed
         self.total_orders_created = 0
-        self.total_orders_processed = 0
+        self.total_orders_processed = 0  # Counts status advances
+        self.total_orders_completed = 0  # Counts only delivered orders
         self.total_orders_cancelled = 0
 
         # Create agents (Mesa 3.x auto-adds to self.agents)
@@ -268,14 +273,31 @@ class WarehouseModel(mesa.Model):
         for _ in range(self.config.num_fulfillment_agents):
             FulfillmentAgent(self)
 
-        # Data collector for visualization
+        # Data collector for visualization - FIXED: Corrected metric definitions
         self.datacollector = DataCollector(
             model_reporters={
                 "Total Orders Created": "total_orders_created",
                 "Total Orders Processed": "total_orders_processed",
+                "Total Orders Completed": "total_orders_completed",
                 "Total Orders Cancelled": "total_orders_cancelled",
-                # Use Mesa's auto-incremented steps counter
+                
+                # Throughput metrics
                 "Orders Per Minute": lambda m: m.total_orders_created / max(1, m.steps / 60),
+                "Completions Per Minute": lambda m: m.total_orders_completed / max(1, m.steps / 60),
+                
+                # Efficiency metrics - FIXED: Using completed orders
+                "Fulfillment Rate (%)": lambda m: (m.total_orders_completed / max(1, m.total_orders_created)) * 100,
+                "Cancellation Rate (%)": lambda m: (m.total_orders_cancelled / max(1, m.total_orders_created)) * 100,
+                
+                # Capacity utilization - FIXED: Using completed orders
+                "Orders in Pipeline": lambda m: m.total_orders_created - m.total_orders_completed - m.total_orders_cancelled,
+                "Avg Orders per Customer": lambda m: m.total_orders_created / max(1, len(m.agents_by_type.get(CustomerAgent, []))),
+                
+                # Processing metrics - FIXED: Using completed orders for meaningful metrics
+                "Avg Completions per Agent": lambda m: m.total_orders_completed / max(1, len(m.agents_by_type.get(FulfillmentAgent, []))),
+                "Completion Efficiency": lambda m: m.total_orders_completed / max(1, len(m.agents_by_type.get(FulfillmentAgent, [])) * (m.steps / 10)),
+                
+                # Agent counts
                 "Active Customer Agents": lambda m: len(m.agents_by_type.get(CustomerAgent, [])),
                 "Active Fulfillment Agents": lambda m: len(m.agents_by_type.get(FulfillmentAgent, [])),
             },
@@ -313,13 +335,14 @@ class WarehouseModel(mesa.Model):
         self.datacollector.collect(self)
 
         # Random activation across all agents (replacement for RandomActivation)
-        self.agents.shuffle_do("step")  # <— migration: replaces schedule.step()
+        self.agents.shuffle_do("step")  # <â€" migration: replaces schedule.step()
 
         # Optional: log progress every 100 steps
         if self.steps % 100 == 0:
             logger.info(
                 f"Step {self.steps}: Created={self.total_orders_created}, "
                 f"Processed={self.total_orders_processed}, "
+                f"Completed={self.total_orders_completed}, "
                 f"Cancelled={self.total_orders_cancelled}"
             )
 
@@ -335,6 +358,7 @@ class WarehouseModel(mesa.Model):
             f"Simulation completed after {self.steps} steps | "
             f"Created: {self.total_orders_created}, "
             f"Processed: {self.total_orders_processed}, "
+            f"Completed: {self.total_orders_completed}, "
             f"Cancelled: {self.total_orders_cancelled}"
         )
 
@@ -349,14 +373,27 @@ def _build_model_from_env() -> WarehouseModel:
 def Page():
     """Solara entrypoint: `solara run warehouse_simulation.py` will render this."""
     model = _build_model_from_env()
-    # Charts-only UI (no space)
+    # Enhanced dashboard with more meaningful metrics
     components = [
+        # Core volume metrics
         make_plot_component("Total Orders Created"),
-        make_plot_component("Total Orders Processed"),
-        make_plot_component("Total Orders Cancelled"),
+        make_plot_component("Total Orders Completed"),
+        make_plot_component("Orders in Pipeline"),
+        
+        # Throughput metrics
         make_plot_component("Orders Per Minute"),
+        make_plot_component("Completions Per Minute"),
+        
+        # Efficiency and quality metrics
+        make_plot_component("Fulfillment Rate (%)"),
+        make_plot_component("Cancellation Rate (%)"),
+        make_plot_component("Completion Efficiency"),
+        
+        # Per-agent performance
+        make_plot_component("Avg Orders per Customer"),
+        make_plot_component("Avg Completions per Agent"),
     ]
-    return SolaraViz(model, components=components, name="Warehouse Agent Simulation")
+    return SolaraViz(model, components=components, name="Enhanced Warehouse Agent Simulation")
 
 
 # ------------------------- Main ---------------------------
@@ -396,6 +433,7 @@ if __name__ == "__main__":
     print("\nFinal Statistics:")
     print(f"Total Orders Created: {m.total_orders_created}")
     print(f"Total Orders Processed: {m.total_orders_processed}")
+    print(f"Total Orders Completed: {m.total_orders_completed}")
     print(f"Total Orders Cancelled: {m.total_orders_cancelled}")
 
     print("\nAgent Statistics:")
