@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Warehouse Operations Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+        
+        .dashboard {
+            max-width: 1600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+        
+        .header h1 {
+            font-size: 2.8rem;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+        
+        .header .live-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            background: rgba(0,0,0,0.2);
+            padding: 8px 16px;
+            border-radius: 25px;
+            font-size: 1.1rem;
+        }
+        
+        .live-dot {
+            width: 12px;
+            height: 12px;
+            background: #00ff88;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .metric-card {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.2);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .metric-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 35px rgba(0,0,0,0.15);
+        }
+        
+        .metric-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #00ff88, #0099ff);
+        }
+        
+        .metric-value {
+            font-size: 3rem;
+            font-weight: 800;
+            color: #1e3c72;
+            margin-bottom: 8px;
+            line-height: 1;
+        }
+        
+        .metric-label {
+            color: #666;
+            font-size: 1rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 10px;
+        }
+        
+        .metric-trend {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 0.9rem;
+        }
+        
+        .trend-up { color: #00c851; }
+        .trend-down { color: #ff4444; }
+        .trend-stable { color: #ffbb33; }
+        
+        .charts-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 25px;
+            margin-bottom: 30px;
+        }
+        
+        .chart-card {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            backdrop-filter: blur(10px);
+            height: 320px;
+        }
+        
+        .chart-card canvas {
+            max-height: 240px !important;
+        }
+        
+        .chart-title {
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: #1e3c72;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        
+        .activity-feed {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            backdrop-filter: blur(10px);
+            margin-bottom: 30px;
+        }
+        
+        .activity-item {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 12px 0;
+            border-bottom: 1px solid #eee;
+            animation: slideIn 0.5s ease;
+        }
+        
+        .activity-item:last-child {
+            border-bottom: none;
+        }
+        
+        .activity-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            color: white;
+            font-size: 0.8rem;
+        }
+        
+        .activity-confirm { background: #28a745; }
+        .activity-pick { background: #17a2b8; }
+        .activity-pack { background: #ffc107; color: #333; }
+        .activity-ship { background: #6f42c1; }
+        .activity-deliver { background: #20c997; }
+        
+        .activity-text {
+            flex: 1;
+            font-size: 0.95rem;
+        }
+        
+        .activity-time {
+            color: #999;
+            font-size: 0.85rem;
+        }
+        
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateX(-20px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+        
+        .performance-indicators {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+        
+        .performance-card {
+            background: rgba(255, 255, 255, 0.9);
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+        
+        .performance-value {
+            font-size: 1.8rem;
+            font-weight: 700;
+            color: #1e3c72;
+        }
+        
+        .performance-label {
+            font-size: 0.9rem;
+            color: #666;
+            margin-top: 5px;
+        }
+        
+        @media (max-width: 768px) {
+            .charts-container {
+                grid-template-columns: 1fr;
+            }
+            .metrics-grid {
+                grid-template-columns: 1fr;
+            }
+            .header h1 {
+                font-size: 2rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="dashboard">
+        <div class="header">
+            <h1>🏭 Live Warehouse Operations</h1>
+            <div class="live-indicator">
+                <div class="live-dot"></div>
+                <span>Mesa Agents Active • Real-Time Data</span>
+            </div>
+        </div>
+        
+        <div class="metrics-grid">
+            <div class="metric-card">
+                <div class="metric-value" id="activeOrders">247</div>
+                <div class="metric-label">Active Orders</div>
+                <div class="metric-trend trend-up">↗ +12% vs last hour</div>
+            </div>
+            
+            <div class="metric-card">
+                <div class="metric-value" id="completedToday">89</div>
+                <div class="metric-label">Completed Today</div>
+                <div class="metric-trend trend-up">↗ +8% vs yesterday</div>
+            </div>
+            
+            <div class="metric-card">
+                <div class="metric-value" id="queuedTasks">15</div>
+                <div class="metric-label">Queued Tasks</div>
+                <div class="metric-trend trend-down">↘ -23% (improving)</div>
+            </div>
+            
+            <div class="metric-card">
+                <div class="metric-value" id="activeAgents">28</div>
+                <div class="metric-label">Active Agents</div>
+                <div class="metric-trend trend-stable">→ Steady operations</div>
+            </div>
+            
+            <div class="metric-card">
+                <div class="metric-value" id="avgProcessTime">4.2m</div>
+                <div class="metric-label">Avg Process Time</div>
+                <div class="metric-trend trend-down">↘ -15% (faster)</div>
+            </div>
+            
+            <div class="metric-card">
+                <div class="metric-value" id="throughputRate">98.7%</div>
+                <div class="metric-label">Throughput Rate</div>
+                <div class="metric-trend trend-up">↗ Above target</div>
+            </div>
+        </div>
+        
+        <div class="performance-indicators">
+            <div class="performance-card">
+                <div class="performance-value">20</div>
+                <div class="performance-label">Customer Agents</div>
+            </div>
+            <div class="performance-card">
+                <div class="performance-value">10</div>
+                <div class="performance-label">Fulfillment Agents</div>
+            </div>
+            <div class="performance-card">
+                <div class="performance-value">156</div>
+                <div class="performance-label">Orders/Hour</div>
+            </div>
+            <div class="performance-card">
+                <div class="performance-value">2.1s</div>
+                <div class="performance-label">Avg Response Time</div>
+            </div>
+        </div>
+        
+        <div class="charts-container">
+            <div class="chart-card">
+                <div class="chart-title">Order Status Pipeline</div>
+                <canvas id="pipelineChart" width="400" height="300"></canvas>
+            </div>
+            
+            <div class="chart-card">
+                <div class="chart-title">Throughput Over Time</div>
+                <canvas id="throughputChart" width="400" height="300"></canvas>
+            </div>
+        </div>
+        
+        <div class="charts-container">
+            <div class="chart-card">
+                <div class="chart-title">Agent Performance Distribution</div>
+                <canvas id="agentChart" width="400" height="300"></canvas>
+            </div>
+            
+            <div class="chart-card">
+                <div class="chart-title">Queue Length Trends</div>
+                <canvas id="queueChart" width="400" height="300"></canvas>
+            </div>
+        </div>
+        
+        <div class="activity-feed">
+            <div class="chart-title">Live Activity Feed</div>
+            <div id="activityList">
+                <div class="activity-item">
+                    <div class="activity-icon activity-confirm">CONF</div>
+                    <div class="activity-text">Order #4523 confirmed by Fulfillment Agent 7</div>
+                    <div class="activity-time">2 sec ago</div>
+                </div>
+                <div class="activity-item">
+                    <div class="activity-icon activity-pick">PICK</div>
+                    <div class="activity-text">Picking started for Order #4501 (Customer_12)</div>
+                    <div class="activity-time">8 sec ago</div>
+                </div>
+                <div class="activity-item">
+                    <div class="activity-icon activity-pack">PACK</div>
+                    <div class="activity-text">Order #4487 packed and ready for shipping</div>
+                    <div class="activity-time">15 sec ago</div>
+                </div>
+                <div class="activity-item">
+                    <div class="activity-icon activity-ship">SHIP</div>
+                    <div class="activity-text">Order #4465 shipped via UPS (Customer_8)</div>
+                    <div class="activity-time">23 sec ago</div>
+                </div>
+                <div class="activity-item">
+                    <div class="activity-icon activity-deliver">DEL</div>
+                    <div class="activity-text">Order #4441 delivered successfully</div>
+                    <div class="activity-time">31 sec ago</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Order Status Pipeline - PIE CHART (no scales)
+        const pipelineCtx = document.getElementById('pipelineChart').getContext('2d');
+        new Chart(pipelineCtx, {
+            type: 'pie',
+            data: {
+                labels: ['Pending', 'Confirmed', 'Picking', 'Packed', 'Shipped', 'Delivered'],
+                datasets: [{
+                    data: [32, 45, 28, 19, 31, 89],
+                    backgroundColor: [
+                        '#ff6b6b',
+                        '#4ecdc4',
+                        '#45b7d1',
+                        '#96ceb4',
+                        '#feca57',
+                        '#48dbfb'
+                    ],
+                    borderWidth: 2,
+                    borderColor: '#fff'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { 
+                        position: 'bottom',
+                        labels: {
+                            padding: 15,
+                            usePointStyle: true
+                        }
+                    }
+                }
+            }
+        });
+
+        // Throughput Chart - LINE CHART
+        const throughputCtx = document.getElementById('throughputChart').getContext('2d');
+        const throughputData = Array.from({length: 24}, (_, i) => Math.floor(Math.random() * 20) + 130 + Math.sin(i/4) * 15);
+        new Chart(throughputCtx, {
+            type: 'line',
+            data: {
+                labels: Array.from({length: 24}, (_, i) => `${i}:00`),
+                datasets: [{
+                    label: 'Orders/Hour',
+                    data: throughputData,
+                    borderColor: '#4ecdc4',
+                    backgroundColor: 'rgba(78, 205, 196, 0.1)',
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }
+                },
+                scales: {
+                    y: { 
+                        beginAtZero: false,
+                        min: 100,
+                        max: 180
+                    }
+                }
+            }
+        });
+
+        // Agent Performance Chart - DOUGHNUT CHART
+        const agentCtx = document.getElementById('agentChart').getContext('2d');
+        new Chart(agentCtx, {
+            type: 'doughnut',
+            data: {
+                labels: ['Highly Active', 'Active', 'Moderate', 'Light Load'],
+                datasets: [{
+                    data: [8, 12, 6, 2],
+                    backgroundColor: [
+                        '#ff6b6b',
+                        '#4ecdc4',
+                        '#45b7d1',
+                        '#feca57'
+                    ],
+                    borderWidth: 2,
+                    borderColor: '#fff'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { 
+                        position: 'bottom',
+                        labels: {
+                            padding: 15,
+                            usePointStyle: true
+                        }
+                    }
+                }
+            }
+        });
+
+        // Queue Length Chart - LINE CHART
+        const queueCtx = document.getElementById('queueChart').getContext('2d');
+        const queueData = Array.from({length: 20}, (_, i) => Math.max(0, Math.floor(Math.random() * 30) - i));
+        new Chart(queueCtx, {
+            type: 'line',
+            data: {
+                labels: Array.from({length: 20}, (_, i) => `${i * 5}m ago`),
+                datasets: [{
+                    label: 'Queue Length',
+                    data: queueData,
+                    borderColor: '#ff6b6b',
+                    backgroundColor: 'rgba(255, 107, 107, 0.1)',
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }
+                },
+                scales: {
+                    y: { 
+                        beginAtZero: true,
+                        max: 50
+                    }
+                }
+            }
+        });
+
+        // Live Updates Simulation
+        function updateMetrics() {
+            const activeOrders = document.getElementById('activeOrders');
+            const completedToday = document.getElementById('completedToday');
+            const queuedTasks = document.getElementById('queuedTasks');
+            const activeAgents = document.getElementById('activeAgents');
+            
+            activeOrders.textContent = Math.floor(Math.random() * 20) + 240;
+            completedToday.textContent = Math.floor(Math.random() * 10) + 85;
+            queuedTasks.textContent = Math.floor(Math.random() * 15) + 5;
+            activeAgents.textContent = Math.floor(Math.random() * 5) + 25;
+        }
+
+        function addActivityItem() {
+            const activities = [
+                { icon: 'activity-confirm', text: 'Order confirmed by Fulfillment Agent', action: 'CONF' },
+                { icon: 'activity-pick', text: 'Picking started for Order', action: 'PICK' },
+                { icon: 'activity-pack', text: 'Order packed and ready', action: 'PACK' },
+                { icon: 'activity-ship', text: 'Order shipped via carrier', action: 'SHIP' },
+                { icon: 'activity-deliver', text: 'Order delivered successfully', action: 'DEL' }
+            ];
+            
+            const activity = activities[Math.floor(Math.random() * activities.length)];
+            const orderNum = Math.floor(Math.random() * 1000) + 4000;
+            const customerNum = Math.floor(Math.random() * 20) + 1;
+            
+            const newItem = document.createElement('div');
+            newItem.className = 'activity-item';
+            newItem.innerHTML = `
+                <div class="activity-icon ${activity.icon}">${activity.action}</div>
+                <div class="activity-text">${activity.text} #${orderNum} (Customer_${customerNum})</div>
+                <div class="activity-time">just now</div>
+            `;
+            
+            const activityList = document.getElementById('activityList');
+            activityList.insertBefore(newItem, activityList.firstChild);
+            
+            while (activityList.children.length > 8) {
+                activityList.removeChild(activityList.lastChild);
+            }
+        }
+
+        setInterval(updateMetrics, 3000);
+        setInterval(addActivityItem, Math.random() * 6000 + 2000);
+        updateMetrics();
+    </script>
+</body>
+</html>

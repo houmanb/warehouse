@@ -3,14 +3,30 @@ FROM python:3.11-slim
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1
 
-# Install gcc for compilation and curl for health checks
+# Install gcc for compilation, curl for health checks
 RUN apt-get update && apt-get install -y gcc curl && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy requirements first for better Docker layer caching
+COPY requirements-fastapi.txt .
 
+# Install all dependencies (test dependencies already included)
+RUN pip install --no-cache-dir -r requirements-fastapi.txt
+
+# Copy application code
 COPY app.py .
+COPY test_warehouse_workflow.py .
+COPY warehouse_client.py .
+COPY test_warehouse_client.py .
+
+# Add test script
+COPY run_tests.sh .
+RUN chmod +x run_tests.sh
+
+# Add health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
 
 EXPOSE 8000
 
+# Default command runs the API server
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]

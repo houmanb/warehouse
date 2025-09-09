@@ -1,269 +1,337 @@
 import asyncio
 import os
+import sys
 from typing import List
 
-import httpx
 import mcp.types as types
 from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 import mcp.server.stdio
 
-API_BASE_URL = os.getenv("API_BASE_URL", "http://fastapi-app:8000")
+# Import the warehouse client
+from warehouse_client import WarehouseClient, create_customer_client, create_fulfillment_client
 
-server = Server("warehouse-mcp")
+API_BASE_URL = os.getenv("API_BASE_URL", "http://warehouse-api:8000")
+DEFAULT_AGENT_ROLE = os.getenv("AGENT_ROLE", "fulfillment")
+CONTAINER_MODE = os.getenv("CONTAINER_MODE", "true").lower() == "true"
 
+server = Server("warehouse-state-machine-mcp")
+
+# ... (keep all your existing @server decorators and functions exactly the same) ...
 @server.list_tools()
 async def handle_list_tools() -> List[types.Tool]:
     return [
-        # Customer Tools
+        # Basic API Operations
         types.Tool(
-            name="create_customer",
-            description="Create a new customer",
+            name="health_check",
+            description="Check API health status",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        ),
+        types.Tool(
+            name="get_state_machine_info",
+            description="Get state machine configuration and role permissions",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "description": "Customer name"},
-                    "email": {"type": "string", "description": "Customer email"},
-                    "phone": {"type": "string", "description": "Customer phone number"},
-                    "address": {"type": "string", "description": "Customer address"}
-                },
-                "required": ["name", "email"]
-            }
-        ),
-        types.Tool(
-            name="get_customer",
-            description="Get a customer by ID",
-            inputSchema={
-                "type": "object",
-                "properties": {"customer_id": {"type": "integer"}},
-                "required": ["customer_id"]
-            }
-        ),
-        types.Tool(
-            name="list_customers",
-            description="List all customers",
-            inputSchema={"type": "object", "properties": {}}
-        ),
-        types.Tool(
-            name="update_customer",
-            description="Update customer information",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "customer_id": {"type": "integer"},
-                    "name": {"type": "string"},
-                    "email": {"type": "string"},
-                    "phone": {"type": "string"},
-                    "address": {"type": "string"}
-                },
-                "required": ["customer_id"]
-            }
-        ),
-        types.Tool(
-            name="delete_customer",
-            description="Delete a customer (soft delete)",
-            inputSchema={
-                "type": "object",
-                "properties": {"customer_id": {"type": "integer"}},
-                "required": ["customer_id"]
+                    "agent_role": {"type": "string", "description": "Agent role: 'customer' or 'fulfillment'", "default": DEFAULT_AGENT_ROLE}
+                }
             }
         ),
         
-        # Category Tools
-        types.Tool(
-            name="create_category",
-            description="Create a new category",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string", "description": "Category name"},
-                    "description": {"type": "string", "description": "Category description"}
-                },
-                "required": ["name"]
-            }
-        ),
-        types.Tool(
-            name="get_category",
-            description="Get a category by ID",
-            inputSchema={
-                "type": "object",
-                "properties": {"category_id": {"type": "integer"}},
-                "required": ["category_id"]
-            }
-        ),
-        types.Tool(
-            name="list_categories",
-            description="List all categories",
-            inputSchema={"type": "object", "properties": {}}
-        ),
-        
-        # Item Tools
-        types.Tool(
-            name="create_item",
-            description="Create a new item",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string", "description": "Item name"},
-                    "description": {"type": "string", "description": "Item description"},
-                    "price": {"type": "number", "description": "Item price"},
-                    "stock_quantity": {"type": "integer", "description": "Stock quantity"},
-                    "category_id": {"type": "integer", "description": "Category ID"},
-                    "sku": {"type": "string", "description": "Stock Keeping Unit"}
-                },
-                "required": ["name", "price", "stock_quantity", "category_id", "sku"]
-            }
-        ),
-        types.Tool(
-            name="get_item",
-            description="Get an item by ID",
-            inputSchema={
-                "type": "object",
-                "properties": {"item_id": {"type": "integer"}},
-                "required": ["item_id"]
-            }
-        ),
-        types.Tool(
-            name="list_items",
-            description="List all active items",
-            inputSchema={"type": "object", "properties": {}}
-        ),
-        types.Tool(
-            name="update_item",
-            description="Update item information",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "item_id": {"type": "integer"},
-                    "name": {"type": "string"},
-                    "description": {"type": "string"},
-                    "price": {"type": "number"},
-                    "stock_quantity": {"type": "integer"},
-                    "category_id": {"type": "integer"},
-                    "sku": {"type": "string"}
-                },
-                "required": ["item_id"]
-            }
-        ),
-        
-        # Basket Tools
-        types.Tool(
-            name="add_to_basket",
-            description="Add an item to customer's basket",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "customer_id": {"type": "integer", "description": "Customer ID"},
-                    "item_id": {"type": "integer", "description": "Item ID"},
-                    "quantity": {"type": "integer", "description": "Quantity to add"}
-                },
-                "required": ["customer_id", "item_id", "quantity"]
-            }
-        ),
-        types.Tool(
-            name="get_basket",
-            description="Get customer's basket",
-            inputSchema={
-                "type": "object",
-                "properties": {"customer_id": {"type": "integer"}},
-                "required": ["customer_id"]
-            }
-        ),
-        types.Tool(
-            name="remove_from_basket",
-            description="Remove an item from customer's basket",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "customer_id": {"type": "integer"},
-                    "item_id": {"type": "integer"}
-                },
-                "required": ["customer_id", "item_id"]
-            }
-        ),
-        types.Tool(
-            name="clear_basket",
-            description="Clear all items from customer's basket",
-            inputSchema={
-                "type": "object",
-                "properties": {"customer_id": {"type": "integer"}},
-                "required": ["customer_id"]
-            }
-        ),
-        
-        # Enhanced Order Tools with Complete Timeline Support
+        # Order Management
         types.Tool(
             name="create_order",
-            description="Create a new warehouse order with timestamp tracking",
+            description="Create a new warehouse order",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "customer_name": {"type": "string", "description": "Name of the customer"},
                     "items": {"type": "array", "items": {"type": "string"}, "description": "List of items"},
-                    "notes": {"type": "string", "description": "Optional order notes"}
+                    "notes": {"type": "string", "description": "Optional order notes"},
+                    "agent_role": {"type": "string", "description": "Agent role: 'customer' or 'fulfillment'", "default": DEFAULT_AGENT_ROLE}
                 },
                 "required": ["customer_name", "items"]
             }
         ),
         types.Tool(
             name="get_order",
-            description="Get a specific order by ID with full timestamp details",
-            inputSchema={"type": "object", "properties": {"order_id": {"type": "integer"}}, "required": ["order_id"]}
+            description="Get order details with available transitions",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "order_id": {"type": "string", "description": "Order ID"},
+                    "agent_role": {"type": "string", "description": "Agent role: 'customer' or 'fulfillment'", "default": DEFAULT_AGENT_ROLE}
+                },
+                "required": ["order_id"]
+            }
         ),
         types.Tool(
-            name="list_orders", 
-            description="List all orders with timestamp information",
+            name="list_orders",
+            description="List all orders with available transitions",
             inputSchema={
-                "type": "object", 
+                "type": "object",
                 "properties": {
-                    "details": {"type": "boolean", "description": "Include full item details and timestamps"}
+                    "limit": {"type": "integer", "description": "Maximum number of orders to return", "default": 50},
+                    "agent_role": {"type": "string", "description": "Agent role: 'customer' or 'fulfillment'", "default": DEFAULT_AGENT_ROLE}
                 }
             }
         ),
+        
+        # State Transitions
         types.Tool(
-            name="update_order",
-            description="Update an existing order and track status changes",
+            name="request_transition",
+            description="Request a state transition for an order",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "order_id": {"type": "integer"},
-                    "customer_name": {"type": "string"},
-                    "items": {"type": "array", "items": {"type": "string"}},
-                    "status": {"type": "string", "description": "Order status: pending, confirmed, picking, packed, shipped, delivered, cancelled"},
-                    "notes": {"type": "string", "description": "Notes about the status change"}
+                    "order_id": {"type": "string", "description": "Order ID"},
+                    "transition": {"type": "string", "description": "Transition name (e.g., 'confirm', 'cancel_from_pending')"},
+                    "notes": {"type": "string", "description": "Optional notes for the transition"},
+                    "agent_id": {"type": "string", "description": "Agent ID performing the transition"},
+                    "agent_role": {"type": "string", "description": "Agent role: 'customer' or 'fulfillment'", "default": DEFAULT_AGENT_ROLE}
+                },
+                "required": ["order_id", "transition"]
+            }
+        ),
+        
+        # Queue Management
+        types.Tool(
+            name="claim_next_task",
+            description="Claim the next task from role-specific queue",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "agent_id": {"type": "string", "description": "Agent ID claiming the task"},
+                    "agent_role": {"type": "string", "description": "Agent role: 'customer' or 'fulfillment'", "default": DEFAULT_AGENT_ROLE}
+                },
+                "required": ["agent_id"]
+            }
+        ),
+        types.Tool(
+            name="complete_task",
+            description="Complete a claimed task",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string", "description": "Task ID to complete"},
+                    "agent_id": {"type": "string", "description": "Agent ID completing the task"},
+                    "agent_role": {"type": "string", "description": "Agent role: 'customer' or 'fulfillment'", "default": DEFAULT_AGENT_ROLE}
+                },
+                "required": ["task_id", "agent_id"]
+            }
+        ),
+        types.Tool(
+            name="release_task",
+            description="Release a claimed task back to the queue",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "agent_id": {"type": "string", "description": "Agent ID releasing the task"},
+                    "reason": {"type": "string", "description": "Reason for releasing the task", "default": "Manual release"},
+                    "agent_role": {"type": "string", "description": "Agent role: 'customer' or 'fulfillment'", "default": DEFAULT_AGENT_ROLE}
+                },
+                "required": ["agent_id"]
+            }
+        ),
+        types.Tool(
+            name="get_queue_status",
+            description="Get current queue status for all roles",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        ),
+        
+        # Convenience Methods - Workflow Actions
+        types.Tool(
+            name="cancel_order",
+            description="Cancel an order (automatically determines correct cancellation transition)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "order_id": {"type": "string", "description": "Order ID to cancel"},
+                    "reason": {"type": "string", "description": "Reason for cancellation", "default": "Customer cancellation"},
+                    "agent_role": {"type": "string", "description": "Agent role: 'customer' or 'fulfillment'", "default": "customer"}
                 },
                 "required": ["order_id"]
             }
         ),
         types.Tool(
-            name="advance_order",
-            description="Advance order to next status in fulfillment workflow",
+            name="confirm_order",
+            description="Confirm a pending order (fulfillment only)",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "order_id": {"type": "integer"},
-                    "notes": {"type": "string", "description": "Optional notes about the advancement"}
+                    "order_id": {"type": "string", "description": "Order ID to confirm"},
+                    "notes": {"type": "string", "description": "Optional confirmation notes"},
+                    "agent_role": {"type": "string", "description": "Agent role: 'customer' or 'fulfillment'", "default": "fulfillment"}
                 },
                 "required": ["order_id"]
             }
         ),
         types.Tool(
-            name="get_order_timeline",
-            description="Get detailed timeline of order status changes and fulfillment timestamps",
+            name="start_picking",
+            description="Start picking process for confirmed order (fulfillment only)",
             inputSchema={
                 "type": "object",
-                "properties": {"order_id": {"type": "integer"}},
+                "properties": {
+                    "order_id": {"type": "string", "description": "Order ID to start picking"},
+                    "notes": {"type": "string", "description": "Optional picking notes"},
+                    "agent_role": {"type": "string", "description": "Agent role: 'customer' or 'fulfillment'", "default": "fulfillment"}
+                },
                 "required": ["order_id"]
             }
         ),
         types.Tool(
-            name="delete_order",
-            description="Delete an order by ID",
-            inputSchema={"type": "object", "properties": {"order_id": {"type": "integer"}}, "required": ["order_id"]}
+            name="pack_order",
+            description="Pack a picked order (fulfillment only)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "order_id": {"type": "string", "description": "Order ID to pack"},
+                    "notes": {"type": "string", "description": "Optional packing notes"},
+                    "agent_role": {"type": "string", "description": "Agent role: 'customer' or 'fulfillment'", "default": "fulfillment"}
+                },
+                "required": ["order_id"]
+            }
         ),
+        types.Tool(
+            name="ship_order",
+            description="Ship a packed order (fulfillment only)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "order_id": {"type": "string", "description": "Order ID to ship"},
+                    "notes": {"type": "string", "description": "Optional shipping notes"},
+                    "agent_role": {"type": "string", "description": "Agent role: 'customer' or 'fulfillment'", "default": "fulfillment"}
+                },
+                "required": ["order_id"]
+            }
+        ),
+        types.Tool(
+            name="deliver_order",
+            description="Mark order as delivered (fulfillment only)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "order_id": {"type": "string", "description": "Order ID to mark as delivered"},
+                    "notes": {"type": "string", "description": "Optional delivery notes"},
+                    "agent_role": {"type": "string", "description": "Agent role: 'customer' or 'fulfillment'", "default": "fulfillment"}
+                },
+                "required": ["order_id"]
+            }
+        ),
+        types.Tool(
+            name="return_order",
+            description="Return a delivered order",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "order_id": {"type": "string", "description": "Order ID to return"},
+                    "reason": {"type": "string", "description": "Reason for return", "default": "Customer return"},
+                    "agent_role": {"type": "string", "description": "Agent role: 'customer' or 'fulfillment'", "default": "customer"}
+                },
+                "required": ["order_id"]
+            }
+        ),
+        
+        # Order Analysis and Filtering
+        types.Tool(
+            name="get_orders_by_state",
+            description="Get orders filtered by specific state - perfect for customer order status aggregation",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "state": {"type": "string", "description": "State to filter by", "enum": ["pending", "confirmed", "picking", "packed", "shipped", "delivered", "cancelled", "halted", "returned"]},
+                    "agent_role": {"type": "string", "description": "Agent role: 'customer' or 'fulfillment'", "default": DEFAULT_AGENT_ROLE}
+                },
+                "required": ["state"]
+            }
+        ),
+        types.Tool(
+            name="get_my_orders",
+            description="Get all orders for a specific customer - useful for customer order history and aggregation",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "customer_name": {"type": "string", "description": "Customer name to filter by"},
+                    "agent_role": {"type": "string", "description": "Agent role: 'customer' or 'fulfillment'", "default": "customer"}
+                },
+                "required": ["customer_name"]
+            }
+        ),
+        types.Tool(
+            name="get_pending_orders",
+            description="Get all orders in pending state (fulfillment focused)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "agent_role": {"type": "string", "description": "Agent role: 'customer' or 'fulfillment'", "default": "fulfillment"}
+                }
+            }
+        ),
+        
+        # Worker/Automation Tools
+        types.Tool(
+            name="process_next_task",
+            description="Claim and process the next available task automatically",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "agent_id": {"type": "string", "description": "Agent ID processing tasks"},
+                    "agent_role": {"type": "string", "description": "Agent role: 'customer' or 'fulfillment'", "default": DEFAULT_AGENT_ROLE}
+                },
+                "required": ["agent_id"]
+            }
+        ),
+        types.Tool(
+            name="run_worker",
+            description="Run as worker agent, continuously processing tasks",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "agent_id": {"type": "string", "description": "Agent ID for worker"},
+                    "max_tasks": {"type": "integer", "description": "Maximum tasks to process (default: 10)"},
+                    "agent_role": {"type": "string", "description": "Agent role: 'customer' or 'fulfillment'", "default": DEFAULT_AGENT_ROLE}
+                },
+                "required": ["agent_id"]
+            }
+        ),
+        
+        # Simulation Tools for Claude Interface
+        types.Tool(
+            name="simulate_customer_workflow",
+            description="Simulate a complete customer workflow - create order and optionally cancel",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "customer_name": {"type": "string", "description": "Customer name for simulation"},
+                    "items": {"type": "array", "items": {"type": "string"}, "description": "Items for simulation"},
+                    "agent_role": {"type": "string", "description": "Agent role: 'customer' or 'fulfillment'", "default": "customer"}
+                },
+                "required": ["customer_name", "items"]
+            }
+        ),
+        types.Tool(
+            name="simulate_complete_workflow",
+            description="Simulate complete order workflow from customer creation through fulfillment to delivery",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "customer_name": {"type": "string", "description": "Customer name for simulation"},
+                    "items": {"type": "array", "items": {"type": "string"}, "description": "Items for simulation"},
+                    "agent_id": {"type": "string", "description": "Agent ID for simulation", "default": "claude-simulation-agent"}
+                },
+                "required": ["customer_name", "items"]
+            }
+        )
     ]
 
-# Optional—avoid noisy "method not found" in your logs
 @server.list_prompts()
 async def handle_list_prompts() -> List[types.Prompt]:
     return []
@@ -277,503 +345,421 @@ def format_timestamp(ts_str):
     if not ts_str:
         return "Not set"
     try:
-        # Parse ISO format and return a readable format
         from datetime import datetime
         dt = datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
         return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
     except:
         return ts_str
 
+def format_order_details(order_data: dict, agent_role: str) -> str:
+    """Format order details for display"""
+    lines = [
+        f"Order {order_data['order_id']} (viewed by {agent_role})",
+        f"Customer: {order_data['customer_name']}",
+        f"Items: {', '.join(order_data['items'])}",
+        f"Current State: {order_data['current_state']}",
+        f"Created: {format_timestamp(order_data.get('created_at'))}",
+        f"Updated: {format_timestamp(order_data.get('updated_at'))}"
+    ]
+    
+    if order_data.get('notes'):
+        lines.append(f"Notes: {order_data['notes']}")
+    
+    # Show available transitions
+    if order_data.get('available_transitions'):
+        lines.append(f"\nAvailable transitions for {agent_role}:")
+        for transition in order_data['available_transitions']:
+            lines.append(f"  - {transition['transition']}: {transition['description']}")
+    
+    # Show recent history
+    if order_data.get('history'):
+        lines.append(f"\nRecent History ({len(order_data['history'])} total entries):")
+        for entry in order_data['history'][-3:]:  # Show last 3 entries
+            lines.append(f"  - {entry['state']} - {format_timestamp(entry['timestamp'])}")
+            if entry.get('notes'):
+                lines.append(f"    {entry['notes']}")
+    
+    return "\n".join(lines)
+
+def get_client(agent_role: str) -> WarehouseClient:
+    """Get appropriate client based on agent role"""
+    if agent_role == "customer":
+        return create_customer_client(API_BASE_URL)
+    elif agent_role == "fulfillment":
+        return create_fulfillment_client(API_BASE_URL)
+    else:
+        raise ValueError(f"Invalid agent role: {agent_role}")
+
 @server.call_tool()
 async def handle_call_tool(name: str, arguments: dict) -> List[types.TextContent]:
+    # Extract agent role from arguments
+    agent_role = arguments.get("agent_role", DEFAULT_AGENT_ROLE)
+    
+    # Validate agent role
+    if agent_role not in ["customer", "fulfillment"]:
+        return [types.TextContent(type="text", 
+            text=f"Invalid agent role: {agent_role}. Must be 'customer' or 'fulfillment'.")]
+    
     try:
-        async with httpx.AsyncClient(base_url=API_BASE_URL, timeout=10.0) as client:
+        client = get_client(agent_role)
+        
+        # Basic API Operations
+        if name == "health_check":
+            result = client.health_check()
+            return [types.TextContent(type="text",
+                text=f"API Health: {result['status']}\nTimestamp: {format_timestamp(result['timestamp'])}")]
+        
+        elif name == "get_state_machine_info":
+            info = client.get_state_machine_info()
             
-            # Customer operations
-            if name == "create_customer":
-                payload = {
-                    "name": arguments["name"],
-                    "email": arguments["email"],
-                    "phone": arguments.get("phone"),
-                    "address": arguments.get("address")
-                }
-                resp = await client.post("/customers", json=payload)
-                resp.raise_for_status()
-                data = resp.json()
-                return [types.TextContent(type="text",
-                    text=f"✅ Customer created\nID: {data['customer_id']}\nName: {data['name']}\nEmail: {data['email']}\nPhone: {data.get('phone', 'N/A')}\nAddress: {data.get('address', 'N/A')}")]
-
-            elif name == "get_customer":
-                cid = arguments["customer_id"]
-                resp = await client.get(f"/customers/{cid}")
-                if resp.status_code == 404:
-                    return [types.TextContent(type="text", text=f"❌ Customer {cid} not found")]
-                resp.raise_for_status()
-                d = resp.json()
-                return [types.TextContent(type="text",
-                    text=f"👤 Customer {d['customer_id']}\nName: {d['name']}\nEmail: {d['email']}\nPhone: {d.get('phone', 'N/A')}\nAddress: {d.get('address', 'N/A')}\nActive: {d['is_active']}")]
-
-            elif name == "list_customers":
-                resp = await client.get("/customers")
-                resp.raise_for_status()
-                customers = resp.json()
-                if not customers:
-                    return [types.TextContent(type="text", text="👥 No customers found")]
-                
-                lines = []
-                for c in customers:
-                    status = "✅" if c["is_active"] else "❌"
-                    lines.append(f"{status} ID: {c['customer_id']} - {c['name']} ({c['email']})")
-                return [types.TextContent(type="text", text=f"👥 All Customers ({len(customers)} total):\n\n" + "\n".join(lines))]
-
-            elif name == "update_customer":
-                cid = arguments["customer_id"]
-                payload = {}
-                for field in ["name", "email", "phone", "address"]:
-                    if field in arguments:
-                        payload[field] = arguments[field]
-                
-                resp = await client.patch(f"/customers/{cid}", json=payload)
-                if resp.status_code == 404:
-                    return [types.TextContent(type="text", text=f"❌ Customer {cid} not found")]
-                resp.raise_for_status()
-                d = resp.json()
-                return [types.TextContent(type="text",
-                    text=f"✅ Customer {cid} updated\nName: {d['name']}\nEmail: {d['email']}\nPhone: {d.get('phone', 'N/A')}\nAddress: {d.get('address', 'N/A')}")]
-
-            elif name == "delete_customer":
-                cid = arguments["customer_id"]
-                resp = await client.delete(f"/customers/{cid}")
-                if resp.status_code == 404:
-                    return [types.TextContent(type="text", text=f"❌ Customer {cid} not found")]
-                resp.raise_for_status()
-                return [types.TextContent(type="text", text=f"🗑️ Customer {cid} deleted (deactivated)")]
-
-            # Category operations
-            elif name == "create_category":
-                payload = {
-                    "name": arguments["name"],
-                    "description": arguments.get("description")
-                }
-                resp = await client.post("/categories", json=payload)
-                resp.raise_for_status()
-                data = resp.json()
-                return [types.TextContent(type="text",
-                    text=f"✅ Category created\nID: {data['category_id']}\nName: {data['name']}\nDescription: {data.get('description', 'N/A')}")]
-
-            elif name == "get_category":
-                cid = arguments["category_id"]
-                resp = await client.get(f"/categories/{cid}")
-                if resp.status_code == 404:
-                    return [types.TextContent(type="text", text=f"❌ Category {cid} not found")]
-                resp.raise_for_status()
-                d = resp.json()
-                return [types.TextContent(type="text",
-                    text=f"📂 Category {d['category_id']}\nName: {d['name']}\nDescription: {d.get('description', 'N/A')}")]
-
-            elif name == "list_categories":
-                resp = await client.get("/categories")
-                resp.raise_for_status()
-                categories = resp.json()
-                if not categories:
-                    return [types.TextContent(type="text", text="📂 No categories found")]
-                
-                lines = []
-                for c in categories:
-                    lines.append(f"📂 ID: {c['category_id']} - {c['name']}")
-                return [types.TextContent(type="text", text=f"📂 All Categories ({len(categories)} total):\n\n" + "\n".join(lines))]
-
-            # Item operations
-            elif name == "create_item":
-                payload = {
-                    "name": arguments["name"],
-                    "description": arguments.get("description"),
-                    "price": arguments["price"],
-                    "stock_quantity": arguments["stock_quantity"],
-                    "category_id": arguments["category_id"],
-                    "sku": arguments["sku"]
-                }
-                resp = await client.post("/items", json=payload)
-                if resp.status_code == 400:
-                    error_detail = resp.json().get("detail", "Bad request")
-                    return [types.TextContent(type="text", text=f"❌ Error creating item: {error_detail}")]
-                resp.raise_for_status()
-                data = resp.json()
-                return [types.TextContent(type="text",
-                    text=f"✅ Item created\nID: {data['item_id']}\nName: {data['name']}\nSKU: {data['sku']}\nPrice: ${data['price']}\nStock: {data['stock_quantity']}\nCategory: {data['category_id']}")]
-
-            elif name == "get_item":
-                iid = arguments["item_id"]
-                resp = await client.get(f"/items/{iid}")
-                if resp.status_code == 404:
-                    return [types.TextContent(type="text", text=f"❌ Item {iid} not found")]
-                resp.raise_for_status()
-                d = resp.json()
-                return [types.TextContent(type="text",
-                    text=f"📦 Item {d['item_id']}\nName: {d['name']}\nSKU: {d['sku']}\nPrice: ${d['price']}\nStock: {d['stock_quantity']}\nCategory: {d['category_id']}\nDescription: {d.get('description', 'N/A')}")]
-
-            elif name == "list_items":
-                resp = await client.get("/items")
-                resp.raise_for_status()
-                items = resp.json()
-                if not items:
-                    return [types.TextContent(type="text", text="📦 No items found")]
-                
-                lines = []
-                for i in items:
-                    stock_emoji = "📦" if i["stock_quantity"] > 0 else "📭"
-                    lines.append(f"{stock_emoji} {i['name']} (SKU: {i['sku']}) - ${i['price']} - Stock: {i['stock_quantity']}")
-                return [types.TextContent(type="text", text=f"📦 All Items ({len(items)} total):\n\n" + "\n".join(lines))]
-
-            elif name == "update_item":
-                iid = arguments["item_id"]
-                payload = {}
-                for field in ["name", "description", "price", "stock_quantity", "category_id", "sku"]:
-                    if field in arguments:
-                        payload[field] = arguments[field]
-                
-                resp = await client.patch(f"/items/{iid}", json=payload)
-                if resp.status_code == 404:
-                    return [types.TextContent(type="text", text=f"❌ Item {iid} not found")]
-                resp.raise_for_status()
-                d = resp.json()
-                return [types.TextContent(type="text",
-                    text=f"✅ Item {iid} updated\nName: {d['name']}\nSKU: {d['sku']}\nPrice: ${d['price']}\nStock: {d['stock_quantity']}")]
-
-            # Basket operations
-            elif name == "add_to_basket":
-                cid = arguments["customer_id"]
-                payload = {
-                    "item_id": arguments["item_id"],
-                    "quantity": arguments["quantity"]
-                }
-                resp = await client.post(f"/baskets/{cid}/items", json=payload)
-                if resp.status_code == 404:
-                    error_detail = resp.json().get("detail", "Not found")
-                    return [types.TextContent(type="text", text=f"❌ Error: {error_detail}")]
-                resp.raise_for_status()
-                return [types.TextContent(type="text", text=f"🛒 Item added to customer {cid}'s basket")]
-
-            elif name == "get_basket":
-                cid = arguments["customer_id"]
-                resp = await client.get(f"/baskets/{cid}")
-                if resp.status_code == 404:
-                    return [types.TextContent(type="text", text=f"🛒 Customer {cid} has no basket or basket is empty")]
-                resp.raise_for_status()
-                d = resp.json()
-                
-                if not d["items"]:
-                    return [types.TextContent(type="text", text=f"🛒 Customer {cid}'s basket is empty")]
-                
-                lines = [f"🛒 Customer {cid}'s Basket:"]
-                for item in d["items"]:
-                    lines.append(f"  📦 {item['item_name']} - Qty: {item['quantity']} - ${item['unit_price']} each - Total: ${item['total_price']:.2f}")
-                lines.append(f"\n💰 Total Amount: ${d['total_amount']:.2f}")
-                return [types.TextContent(type="text", text="\n".join(lines))]
-
-            elif name == "remove_from_basket":
-                cid = arguments["customer_id"]
-                iid = arguments["item_id"]
-                resp = await client.delete(f"/baskets/{cid}/items/{iid}")
-                if resp.status_code == 404:
-                    return [types.TextContent(type="text", text=f"❌ Item not found in customer {cid}'s basket")]
-                resp.raise_for_status()
-                return [types.TextContent(type="text", text=f"🗑️ Item removed from customer {cid}'s basket")]
-
-            elif name == "clear_basket":
-                cid = arguments["customer_id"]
-                resp = await client.delete(f"/baskets/{cid}")
-                if resp.status_code == 404:
-                    return [types.TextContent(type="text", text=f"❌ Customer {cid} has no basket")]
-                resp.raise_for_status()
-                return [types.TextContent(type="text", text=f"🧹 Customer {cid}'s basket cleared")]
-
-            # Enhanced Order operations with complete timeline support
-            elif name == "create_order":
-                payload = {
-                    "customer_name": arguments["customer_name"], 
-                    "items": arguments["items"],
-                    "notes": arguments.get("notes")
-                }
-                resp = await client.post("/orders", json=payload)
-                resp.raise_for_status()
-                data = resp.json()
-                
-                # Enhanced response with comprehensive timestamp information
+            lines = [
+                f"State Machine Configuration",
+                f"Role: {agent_role}",
+                "",
+                f"Available States: {', '.join(info['states'])}",
+                "",
+                f"Available Transitions for {agent_role}:"
+            ]
+            
+            role_transitions = info['role_permissions'].get(agent_role, [])
+            for transition in role_transitions:
+                lines.append(f"  - {transition}")
+            
+            return [types.TextContent(type="text", text="\n".join(lines))]
+        
+        # Order Management
+        elif name == "create_order":
+            order = client.create_order(
+                customer_name=arguments["customer_name"],
+                items=arguments["items"],
+                notes=arguments.get("notes")
+            )
+            return [types.TextContent(type="text", 
+                text=f"Order created by {agent_role}\n\n{format_order_details(order, agent_role)}")]
+        
+        elif name == "get_order":
+            order_id = arguments["order_id"]
+            order = client.get_order(order_id)
+            return [types.TextContent(type="text", text=format_order_details(order, agent_role))]
+        
+        elif name == "list_orders":
+            limit = arguments.get("limit", 50)
+            orders = client.list_orders(limit)
+            
+            if not orders:
+                return [types.TextContent(type="text", text="No orders found")]
+            
+            lines = [f"Orders ({len(orders)} total) - {agent_role} view:", ""]
+            for order in orders:
+                lines.append(f"- Order {order['order_id']}: {order['customer_name']} - {order['current_state']} - {len(order['items'])} items")
+            
+            return [types.TextContent(type="text", text="\n".join(lines))]
+        
+        # State Transitions
+        elif name == "request_transition":
+            result = client.request_transition(
+                order_id=arguments["order_id"],
+                transition=arguments["transition"],
+                notes=arguments.get("notes"),
+                agent_id=arguments.get("agent_id", f"claude-{agent_role}-agent")
+            )
+            return [types.TextContent(type="text", 
+                text=f"Transition requested by {agent_role}\n{result['message']}\nTask ID: {result['task_id']}")]
+        
+        # Queue Management
+        elif name == "claim_next_task":
+            agent_id = arguments["agent_id"]
+            result = client.claim_next_task(agent_id)
+            
+            if "No" in result["message"] and "tasks available" in result["message"]:
+                return [types.TextContent(type="text", text=f"No {agent_role} tasks available for {agent_id}")]
+            
+            task = result["task"]
+            lines = [
+                f"Task claimed by {agent_id}",
+                f"Task ID: {task['task_id']}",
+                f"Order ID: {task['order_id']}",
+                f"Transition: {task['transition']}",
+                f"Expires in: {result.get('expires_in_seconds', 300)} seconds"
+            ]
+            
+            return [types.TextContent(type="text", text="\n".join(lines))]
+        
+        elif name == "complete_task":
+            result = client.complete_task(
+                task_id=arguments["task_id"],
+                agent_id=arguments["agent_id"]
+            )
+            return [types.TextContent(type="text", 
+                text=f"Task completed: {result['message']}\nOrder {result['order_id']} -> {result['new_state']}")]
+        
+        elif name == "release_task":
+            result = client.release_task(
+                agent_id=arguments["agent_id"],
+                reason=arguments.get("reason", "Manual release")
+            )
+            return [types.TextContent(type="text", text=f"Task released: {result['message']}")]
+        
+        elif name == "get_queue_status":
+            status = client.get_queue_status()
+            
+            lines = [
+                "Queue Status:",
+                f"Customer queue: {status['customer_queued']} tasks",
+                f"Fulfillment queue: {status['fulfillment_queued']} tasks",
+                f"Total processing: {status['total_processing']} tasks",
+                f"Total tasks: {status['total_tasks']}"
+            ]
+            
+            return [types.TextContent(type="text", text="\n".join(lines))]
+        
+        # Convenience Methods - Use Client's Smart Logic
+        elif name == "cancel_order":
+            result = client.cancel_order(
+                order_id=arguments["order_id"],
+                reason=arguments.get("reason", "Customer cancellation via Claude MCP")
+            )
+            return [types.TextContent(type="text", 
+                text=f"Order cancellation requested by {agent_role}\n{result['message']}")]
+        
+        elif name == "confirm_order":
+            result = client.confirm_order(
+                order_id=arguments["order_id"],
+                notes=arguments.get("notes")
+            )
+            return [types.TextContent(type="text", 
+                text=f"Order confirmation completed by {agent_role}\n{result['message']}")]
+        
+        elif name == "start_picking":
+            result = client.start_picking(
+                order_id=arguments["order_id"],
+                notes=arguments.get("notes")
+            )
+            return [types.TextContent(type="text", 
+                text=f"Picking started by {agent_role}\n{result['message']}")]
+        
+        elif name == "pack_order":
+            result = client.pack_order(
+                order_id=arguments["order_id"],
+                notes=arguments.get("notes")
+            )
+            return [types.TextContent(type="text", 
+                text=f"Order packed by {agent_role}\n{result['message']}")]
+        
+        elif name == "ship_order":
+            result = client.ship_order(
+                order_id=arguments["order_id"],
+                notes=arguments.get("notes")
+            )
+            return [types.TextContent(type="text", 
+                text=f"Order shipped by {agent_role}\n{result['message']}")]
+        
+        elif name == "deliver_order":
+            result = client.deliver_order(
+                order_id=arguments["order_id"],
+                notes=arguments.get("notes")
+            )
+            return [types.TextContent(type="text", 
+                text=f"Order delivered by {agent_role}\n{result['message']}")]
+        
+        elif name == "return_order":
+            result = client.return_order(
+                order_id=arguments["order_id"],
+                reason=arguments.get("reason", "Customer return via Claude MCP")
+            )
+            return [types.TextContent(type="text", 
+                text=f"Order return requested by {agent_role}\n{result['message']}")]
+        
+        # Filtering methods using client's convenience methods
+        elif name == "get_my_orders":
+            orders = client.get_my_orders(arguments["customer_name"])
+            
+            if not orders:
+                return [types.TextContent(type="text", text=f"No orders found for customer: {arguments['customer_name']}")]
+            
+            lines = [f"Orders for {arguments['customer_name']} ({len(orders)} total) - {agent_role} view:", ""]
+            for order in orders:
+                lines.append(f"- Order {order['order_id']}: {order['customer_name']} - {order['current_state']} - {len(order['items'])} items")
+            
+            return [types.TextContent(type="text", text="\n".join(lines))]
+        
+        elif name == "get_orders_by_state":
+            orders = client.get_orders_by_state(arguments["state"])
+            
+            if not orders:
+                return [types.TextContent(type="text", text=f"No orders found in {arguments['state']} state")]
+            
+            lines = [f"Orders in {arguments['state']} state ({len(orders)} total) - {agent_role} view:", ""]
+            for order in orders:
+                lines.append(f"- Order {order['order_id']}: {order['customer_name']} - {order['current_state']} - {len(order['items'])} items")
+            
+            return [types.TextContent(type="text", text="\n".join(lines))]
+        
+        elif name == "get_pending_orders":
+            orders = client.get_pending_orders()
+            
+            if not orders:
+                return [types.TextContent(type="text", text="No pending orders found")]
+            
+            lines = [f"Pending Orders ({len(orders)} total) - {agent_role} view:", ""]
+            for order in orders:
+                lines.append(f"- Order {order['order_id']}: {order['customer_name']} - {order['current_state']} - {len(order['items'])} items")
+            
+            return [types.TextContent(type="text", text="\n".join(lines))]
+        
+        # Worker/Automation Tools
+        elif name == "process_next_task":
+            agent_id = arguments["agent_id"]
+            result = client.process_next_task(agent_id)
+            
+            if result.get('action') == 'task_completed':
+                task = result['task']
+                completion = result['result']
                 lines = [
-                    f"✅ Order created successfully",
-                    f"📋 Order ID: {data['order_id']}",
-                    f"👤 Customer: {data['customer_name']}",
-                    f"📦 Items: {', '.join(data['items'])}",
-                    f"📊 Status: {data['status']}",
-                    f"🕐 Created: {format_timestamp(data['created_at'])}",
-                    f"🕐 Placed: {format_timestamp(data.get('placed_at'))}"
+                    f"Task completed by {agent_id}",
+                    f"Order {completion['order_id']}: {task['transition']} -> {completion['new_state']}",
+                    f"Message: {completion['message']}"
                 ]
-                if data.get('notes'):
-                    lines.append(f"📝 Notes: {data['notes']}")
-                
-                # Show initial status history
-                if data.get('status_history'):
-                    lines.append(f"\n📜 Status History: {len(data['status_history'])} entries")
-                
                 return [types.TextContent(type="text", text="\n".join(lines))]
-
-            elif name == "get_order":
-                oid = arguments["order_id"]
-                resp = await client.get(f"/orders/{oid}")
-                if resp.status_code == 404:
-                    return [types.TextContent(type="text", text=f"❌ Order {oid} not found")]
-                resp.raise_for_status()
-                d = resp.json()
-                
-                # Comprehensive order details with all timestamp information
-                lines = [
-                    f"📋 Order {d['order_id']} Details",
-                    f"👤 Customer: {d['customer_name']}",
-                    f"📦 Items: {', '.join(d['items'])}",
-                    f"📊 Current Status: {d['status']}",
-                    "",
-                    "🕐 Fulfillment Timeline:"
-                ]
-                
-                # Add fulfillment timestamps with better formatting
-                timestamp_fields = [
-                    ("placed_at", "📅 Order Placed"),
-                    ("confirmed_at", "✅ Confirmed"),
-                    ("picked_at", "🔍 Picked"),
-                    ("packed_at", "📦 Packed"),
-                    ("shipped_at", "🚚 Shipped"),
-                    ("delivered_at", "🏠 Delivered"),
-                    ("cancelled_at", "❌ Cancelled")
-                ]
-                
-                for field, label in timestamp_fields:
-                    if d.get(field):
-                        lines.append(f"  {label}: {format_timestamp(d[field])}")
-                
-                if d.get('notes'):
-                    lines.append(f"\n📝 Notes: {d['notes']}")
-                
-                # Add comprehensive status history
-                if d.get('status_history'):
-                    lines.append(f"\n📜 Status History ({len(d['status_history'])} changes):")
-                    for i, history in enumerate(d['status_history'][-3:], 1):  # Show last 3 changes
-                        lines.append(f"  {i}. {history['status']} - {format_timestamp(history['timestamp'])}")
-                        if history.get('notes'):
-                            lines.append(f"     📝 {history['notes']}")
-                    if len(d['status_history']) > 3:
-                        lines.append(f"     ... and {len(d['status_history']) - 3} more changes")
-                
-                return [types.TextContent(type="text", text="\n".join(lines))]
-
-            elif name == "list_orders":
-                resp = await client.get("/orders")
-                resp.raise_for_status()
-                rows = resp.json()
-                if not rows:
-                    return [types.TextContent(type="text", text="📊 No orders found")]
-                
-                show_details = arguments.get("details", False)
-                
-                if show_details:
-                    # Detailed view with comprehensive timestamps
-                    lines = [f"📊 All Orders ({len(rows)} total) - Detailed Timeline View:\n"]
-                    for d in rows:
-                        status_emoji = {
-                            "pending": "⏳", "confirmed": "✅", "picking": "🔍", 
-                            "packed": "📦", "shipped": "🚚", "delivered": "🏠", 
-                            "cancelled": "❌"
-                        }.get(d["status"], "❓")
-                        
-                        items_str = ', '.join(d['items']) if d.get('items') else 'No items'
-                        created = format_timestamp(d.get('created_at', ''))
-                        
-                        lines.append(f"{status_emoji} Order {d['order_id']}: {d['customer_name']}")
-                        lines.append(f"   📦 Items: {items_str}")
-                        lines.append(f"   📊 Status: {d['status']}")
-                        lines.append(f"   🕐 Created: {created}")
-                        
-                        # Show latest status change timestamp
-                        latest_status_time = d.get(f"{d['status']}_at")
-                        if latest_status_time:
-                            lines.append(f"   🕐 {d['status'].title()}: {format_timestamp(latest_status_time)}")
-                        
-                        if d.get('notes'):
-                            lines.append(f"   📝 Notes: {d['notes']}")
-                        lines.append("")
-                        
-                    return [types.TextContent(type="text", text="\n".join(lines))]
-                else:
-                    # Summary view with status indicators
-                    lines = []
-                    for d in rows:
-                        status_emoji = {
-                            "pending": "⏳", "confirmed": "✅", "picking": "🔍", 
-                            "packed": "📦", "shipped": "🚚", "delivered": "🏠", 
-                            "cancelled": "❌"
-                        }.get(d["status"], "❓")
-                        
-                        created_time = format_timestamp(d.get('created_at', ''))
-                        lines.append(f"{status_emoji} Order {d['order_id']}: {d['customer_name']} - {len(d['items'])} items - {d['status']} ({created_time})")
-                        
-                    return [types.TextContent(type="text", text=f"📊 All Orders ({len(rows)} total):\n\n" + "\n".join(lines))]
-
-            elif name == "update_order":
-                oid = arguments["order_id"]
-                payload = {}
-                if "customer_name" in arguments: 
-                    payload["customer_name"] = arguments["customer_name"]
-                if "items" in arguments: 
-                    payload["items"] = arguments["items"]
-                if "status" in arguments: 
-                    payload["status"] = arguments["status"]
-                if "notes" in arguments:
-                    payload["notes"] = arguments["notes"]
-                
-                resp = await client.patch(f"/orders/{oid}", json=payload)
-                if resp.status_code == 404:
-                    return [types.TextContent(type="text", text=f"❌ Order {oid} not found")]
-                resp.raise_for_status()
-                d = resp.json()
-                
-                lines = [
-                    f"✅ Order {oid} updated successfully",
-                    f"👤 Customer: {d['customer_name']}",
-                    f"📦 Items: {', '.join(d['items'])}",
-                    f"📊 Status: {d['status']}",
-                    f"🕐 Updated: {format_timestamp(d['updated_at'])}"
-                ]
-                
-                # Show status-specific timestamp if available
-                status_timestamp_field = f"{d['status']}_at"
-                if d.get(status_timestamp_field):
-                    lines.append(f"🕐 {d['status'].title()}: {format_timestamp(d[status_timestamp_field])}")
-                
-                return [types.TextContent(type="text", text="\n".join(lines))]
-
-            elif name == "advance_order":
-                oid = arguments["order_id"]
-                notes = arguments.get("notes")
-                
-                # Build request with optional notes
-                params = {}
-                if notes:
-                    params["notes"] = notes
-                
-                resp = await client.post(f"/orders/{oid}/advance", params=params)
-                if resp.status_code == 404:
-                    return [types.TextContent(type="text", text=f"❌ Order {oid} not found")]
-                if resp.status_code == 400:
-                    error_detail = resp.json().get("detail", "Cannot advance order")
-                    return [types.TextContent(type="text", text=f"❌ {error_detail}")]
-                resp.raise_for_status()
-                
-                result = resp.json()
-                order_data = result["order"]
-                
-                lines = [
-                    f"🚀 {result['message']}",
-                    f"📋 Order {oid} Details:",
-                    f"👤 Customer: {order_data['customer_name']}",
-                    f"📊 New Status: {order_data['status']}",
-                    f"🕐 Updated: {format_timestamp(order_data['updated_at'])}"
-                ]
-                
-                # Show status-specific timestamp
-                status_timestamp_field = f"{order_data['status']}_at"
-                if order_data.get(status_timestamp_field):
-                    status_label = {
-                        "confirmed_at": "✅ Confirmed",
-                        "picked_at": "🔍 Picked", 
-                        "packed_at": "📦 Packed",
-                        "shipped_at": "🚚 Shipped",
-                        "delivered_at": "🏠 Delivered"
-                    }.get(status_timestamp_field, f"🕐 {order_data['status'].title()}")
-                    lines.append(f"{status_label}: {format_timestamp(order_data[status_timestamp_field])}")
-                
-                return [types.TextContent(type="text", text="\n".join(lines))]
-
-            elif name == "get_order_timeline":
-                oid = arguments["order_id"]
-                resp = await client.get(f"/orders/{oid}/timeline")
-                if resp.status_code == 404:
-                    return [types.TextContent(type="text", text=f"❌ Order {oid} not found")]
-                resp.raise_for_status()
-                
-                timeline = resp.json()
-                
-                lines = [
-                    f"📅 Order {timeline['order_id']} Complete Timeline",
-                    f"👤 Customer: {timeline['customer_name']}",
-                    f"📊 Current Status: {timeline['current_status']}",
-                    f"🕐 Created: {format_timestamp(timeline['created_at'])}",
-                    "",
-                    "🕐 Fulfillment Timeline:"
-                ]
-                
-                # Show all fulfillment timestamps in order
-                fulfillment = timeline['fulfillment_timestamps']
-                timestamp_labels = [
-                    ("placed_at", "📅 Order Placed"),
-                    ("confirmed_at", "✅ Order Confirmed"),
-                    ("picked_at", "🔍 Items Picked"),
-                    ("packed_at", "📦 Items Packed"),
-                    ("shipped_at", "🚚 Package Shipped"),
-                    ("delivered_at", "🏠 Order Delivered"),
-                    ("cancelled_at", "❌ Order Cancelled")
-                ]
-                
-                completed_steps = 0
-                for field, label in timestamp_labels:
-                    if fulfillment.get(field):
-                        lines.append(f"  {label}: {format_timestamp(fulfillment[field])}")
-                        completed_steps += 1
-                    elif field != "cancelled_at":  # Don't show "not set" for cancelled
-                        lines.append(f"  {label}: Not completed")
-                
-                lines.append(f"\n📊 Progress: {completed_steps}/{len(timestamp_labels)-1} steps completed")
-                
-                # Show comprehensive status change history
-                if timeline['status_changes']:
-                    lines.append(f"\n📜 Complete Status Change History ({len(timeline['status_changes'])} changes):")
-                    for i, change in enumerate(timeline['status_changes'], 1):
-                        emoji = {
-                            "pending": "⏳", "confirmed": "✅", "picking": "🔍",
-                            "packed": "📦", "shipped": "🚚", "delivered": "🏠", 
-                            "cancelled": "❌"
-                        }.get(change['status'], "🔄")
-                        
-                        lines.append(f"  {i}. {emoji} {change['status'].upper()} - {format_timestamp(change['timestamp'])}")
-                        if change.get('notes'):
-                            lines.append(f"     💬 {change['notes']}")
-                
-                return [types.TextContent(type="text", text="\n".join(lines))]
-
-            elif name == "delete_order":
-                oid = arguments["order_id"]
-                resp = await client.delete(f"/orders/{oid}")
-                if resp.status_code == 404:
-                    return [types.TextContent(type="text", text=f"❌ Order {oid} not found")]
-                resp.raise_for_status()
-                return [types.TextContent(type="text", text=f"🗑️ Order {oid} deleted and marked as cancelled")]
-
+            
+            elif result.get('action') == 'task_failed':
+                return [types.TextContent(type="text", text=f"Task failed: {result['error']}")]
+            
             else:
-                return [types.TextContent(type="text", text=f"❌ Unknown tool: {name}")]
+                return [types.TextContent(type="text", text=f"No {agent_role} tasks available for {agent_id}")]
+        
+        elif name == "run_worker":
+            agent_id = arguments["agent_id"]
+            max_tasks = arguments.get("max_tasks", 10)
+            
+            processed_tasks = client.run_worker(agent_id, max_tasks, poll_interval=0)
+            
+            if not processed_tasks:
+                return [types.TextContent(type="text", text=f"Worker {agent_id} found no tasks to process")]
+            
+            lines = [f"Worker {agent_id} processed {len(processed_tasks)} tasks:", ""]
+            for result in processed_tasks:
+                if result.get('action') == 'task_completed':
+                    task = result['task']
+                    completion = result['result']
+                    lines.append(f"- SUCCESS: {task['transition']} -> {completion['new_state']} for order {completion['order_id']}")
+                elif result.get('action') == 'task_failed':
+                    task = result['task']
+                    lines.append(f"- FAILED: {task['transition']} for order {task['order_id']} - {result['error']}")
+            
+            return [types.TextContent(type="text", text="\n".join(lines))]
+        
+        # Simulation Tools
+        elif name == "simulate_customer_workflow":
+            result = client.simulate_customer_workflow(
+                customer_name=arguments["customer_name"],
+                items=arguments["items"]
+            )
+            
+            lines = [
+                f"Customer workflow simulation completed",
+                f"Success: {result['success']}",
+                f"Order ID: {result.get('order_id', 'N/A')}",
+                f"Final State: {result.get('final_state', 'N/A')}",
+                "",
+                "Workflow steps:"
+            ] + [f"- {step}" for step in result['workflow_steps']]
+            
+            return [types.TextContent(type="text", text="\n".join(lines))]
+        
+        elif name == "simulate_complete_workflow":
+            # Use warehouse client for customer creation, then switch to fulfillment for processing
+            customer_name = arguments["customer_name"]
+            items = arguments["items"]
+            agent_id = arguments.get("agent_id", "claude-simulation-agent")
+            
+            workflow_steps = []
+            
+            try:
+                # Create order as customer
+                customer_client = create_customer_client(API_BASE_URL)
+                order = customer_client.create_order(customer_name, items, "Complete workflow simulation via Claude MCP")
+                order_id = order['order_id']
+                workflow_steps.append(f"Customer created order {order_id}")
+                
+                # Process through fulfillment workflow
+                fulfillment_client = create_fulfillment_client(API_BASE_URL)
+                
+                # Run fulfillment agent to process all tasks for this order
+                processed_tasks = fulfillment_client.run_worker(agent_id, max_tasks=10, poll_interval=0)
+                
+                for result in processed_tasks:
+                    if result.get('action') == 'task_completed':
+                        task = result['task']
+                        completion = result['result']
+                        if task['order_id'] == order_id:
+                            workflow_steps.append(f"Completed {task['transition']} -> {completion['new_state']}")
+                    elif result.get('action') == 'task_failed':
+                        task = result['task']
+                        if task['order_id'] == order_id:
+                            workflow_steps.append(f"FAILED {task['transition']}: {result['error']}")
+                
+                # Get final order state
+                final_order = customer_client.get_order(order_id)
+                
+                lines = [
+                    f"Complete workflow simulation finished",
+                    f"Order {order_id} final state: {final_order['current_state']}",
+                    "",
+                    "Workflow steps:"
+                ] + [f"- {step}" for step in workflow_steps]
+                
+                return [types.TextContent(type="text", text="\n".join(lines))]
+                
+            except Exception as e:
+                return [types.TextContent(type="text", text=f"Complete simulation error: {e}")]
+        
+        else:
+            return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
 
-    except httpx.HTTPError as e:
-        return [types.TextContent(type="text", text=f"❌ HTTP error: {e}")]
+    except ValueError as e:
+        # Client validation errors (like permission errors, invalid requests)
+        return [types.TextContent(type="text", text=f"Request error: {e}")]
+    except PermissionError as e:
+        # Role permission errors
+        return [types.TextContent(type="text", text=f"Permission denied: {e}")]
+    except Exception as e:
+        # Unexpected errors
+        return [types.TextContent(type="text", text=f"Unexpected error: {e}")]
 
 async def main():
-    async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
-        await server.run(
-            read_stream,
-            write_stream,
-            InitializationOptions(
-                server_name="warehouse-mcp",
-                server_version="2.1.0",
-                capabilities=server.get_capabilities(notification_options=NotificationOptions(), experimental_capabilities={}),
-            ),
-        )
+    # Only print to stderr in MCP mode to avoid breaking JSON-RPC protocol
+    if CONTAINER_MODE:
+        # In container mode, we can safely print to stdout
+        print(f"Starting Warehouse State Machine MCP Server v1.0.0")
+        print(f"Default agent role: {DEFAULT_AGENT_ROLE}")
+        print(f"API Base URL: {API_BASE_URL}")
+        print("Running in container mode - server staying alive")
+        try:
+            # Keep the container running indefinitely
+            while True:
+                await asyncio.sleep(1)
+        except KeyboardInterrupt:
+            print("Server shutting down...")
+    else:
+        # Normal MCP stdio mode - NO stdout prints allowed
+        import sys
+        sys.stderr.write(f"Starting MCP Server - stdio mode\n")
+        sys.stderr.flush()
+        
+        async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
+            await server.run(
+                read_stream,
+                write_stream,
+                InitializationOptions(
+                    server_name="warehouse-state-machine-mcp",
+                    server_version="1.0.0",
+                    capabilities=server.get_capabilities(
+                        notification_options=NotificationOptions(), 
+                        experimental_capabilities={}
+                    ),
+                ),
+            )
 
 if __name__ == "__main__":
     asyncio.run(main())

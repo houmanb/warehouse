@@ -3,95 +3,140 @@ services:
     image: redis:7
     ports:
       - "6379:6379"
-    volumes:
-      - redis_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
-      retries: 5
-    restart: unless-stopped
+      retries: 3
 
-  fastapi-app:
-    image: warehouse-fastapi-app:latest
+  warehouse-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.fastapi
     depends_on:
       redis:
         condition: service_healthy
     environment:
-      REDIS_HOST: redis
-      REDIS_PORT: "6379"
-      TZ: Europe/Vienna
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     ports:
       - "8000:8000"
-    restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
 
-  mcp:
-    image: warehouse-mcp:latest
+  # HTTP workflow tests
+  workflow-tests:
+    build:
+      context: .
+      dockerfile: Dockerfile.fastapi
     depends_on:
-      fastapi-app:
+      warehouse-api:
         condition: service_healthy
     environment:
-      API_BASE_URL: http://fastapi-app:8000
-      PYTHONUNBUFFERED: "1"
-      TZ: Europe/Vienna
-    restart: "no"
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    command: ["python", "-m", "pytest", "test_warehouse_workflow.py", "-v", "--tb=short", "--color=yes"]
+    profiles:
+      - test
 
-  mesa-simulation:
-    image: warehouse-mesa:latest
+  # Client library tests  
+  client-tests:
+    build:
+      context: .
+      dockerfile: Dockerfile.fastapi
     depends_on:
-      fastapi-app:
+      warehouse-api:
         condition: service_healthy
     environment:
-      WAREHOUSE_URL: http://fastapi-app:8000
-      PYTHONUNBUFFERED: "1"
-      IN_DOCKER: "1"
-      TZ: Europe/Vienna
-      NUM_CUSTOMERS: "5"
-      NUM_FULFILLMENT_AGENTS: "2"
-      SOLARA_ASSETS_PROXY: "False"
-      TINI_SUBREAPER: "1"
-    ports:
-      - "8521:8521"
-    restart: unless-stopped
-    command: ["/usr/bin/tini", "--", "python", "warehouse_simulation.py", "server"]
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    command: ["python", "-m", "pytest", "test_warehouse_client.py", "-v", "--tb=short", "--color=yes"]
+    profiles:
+      - test
+
+  # All tests combined
+  all-tests:
+    build:
+      context: .
+      dockerfile: Dockerfile.fastapi
+    depends_on:
+      warehouse-api:
+        condition: service_healthy
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    command: ["python", "-m", "pytest", "test_warehouse_workflow.py", "test_warehouse_client.py", "-v", "--tb=short", "--color=yes"]
+    profiles:
+      - test
+
+  # Quick smoke tests
+  smoke-tests:
+    build:
+      context: .
+      dockerfile: Dockerfile.fastapi
+    depends_on:
+      warehouse-api:
+        condition: service_healthy
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    command: ["python", "-c", "import requests; r=requests.get('http://warehouse-api:8000/health'); assert r.json()['ok']; print('Health check passed')"]
+    profiles:
+      - test
+
+  # MCP Server for AI assistant integration
+  mcp-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp
+    depends_on:
+      warehouse-api:
+        condition: service_healthy
+    environment:
+      - API_BASE_URL=http://warehouse-api:8000
+      - AGENT_ROLE=fulfillment
+      - CONTAINER_MODE=true
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8521/ || exit 1"]
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://warehouse-api:8000/health').raise_for_status()"]
       interval: 30s
       timeout: 10s
-      retries: 5
-      start_period: 20s
-    init: true
-    stop_grace_period: 15s
+      retries: 3
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
 
-  mesa-headless:
-    image: warehouse-mesa:latest
+  # Mesa simulation
+  mesa-simulation:
+    build:
+      context: .
+      dockerfile: Dockerfile.mesa
     depends_on:
-      fastapi-app:
+      warehouse-api:
         condition: service_healthy
     environment:
-      WAREHOUSE_URL: http://fastapi-app:8000
-      PYTHONUNBUFFERED: "1"
-      IN_DOCKER: "1"
-      TZ: Europe/Vienna
-      NUM_CUSTOMERS: "10"
-      NUM_FULFILLMENT_AGENTS: "3"
-      MAX_STEPS: "1000"
-      SOLARA_ASSETS_PROXY: "False"
-      TINI_SUBREAPER: "1"
-    command: ["/usr/bin/tini", "--", "python", "warehouse_simulation.py"]
-    restart: "no"
+      - WAREHOUSE_URL=http://warehouse-api:8000
+      - LOG_LEVEL=DEBUG
+      - NUM_CUSTOMERS=20
+      - NUM_FULFILLMENT_AGENTS=10
+      - ENABLE_SHIFT_PATTERNS=false
+      - ENABLE_INVENTORY_CONSTRAINTS=false
+      - ENABLE_OPERATIONAL_DISRUPTIONS=false
+      - SIMULATION_SPEED_FACTOR=0.05
+    ports:
+      - "8521:8521"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8521/"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
     profiles:
-      - headless
-    init: true
-
-volumes:
-  redis_data:
+      - simulation
+    restart: unless-stopped
+    command: ["solara", "run", "warehouse_simulation.py", "--host", "0.0.0.0", "--port", "8521"]
 
 networks:
   default:

@@ -1,36 +1,56 @@
 FROM python:3.11-slim
 
-# System deps: curl for healthchecks, tini for init
+# System deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl tini ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Environment
+# Environment variables for enhanced simulation with logging
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     IN_DOCKER=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    WAREHOUSE_URL=http://warehouse-api:8000 \
+    LOG_LEVEL=DEBUG \
+    NUM_CUSTOMERS=8 \
+    NUM_FULFILLMENT_AGENTS=3 \
+    ENABLE_SHIFT_PATTERNS=true \
+    ENABLE_INVENTORY_CONSTRAINTS=true \
+    ENABLE_OPERATIONAL_DISRUPTIONS=true \
+    SIMULATION_SPEED_FACTOR=0.1
+
+# Create user first
+RUN useradd -m appuser
 
 # Python deps
 COPY requirements-mesa.txt .
 RUN python -m pip install --upgrade pip \
- && pip install --no-cache-dir -v -r requirements-mesa.txt
+ && pip install --no-cache-dir -r requirements-mesa.txt
+
+# Create the Solara cache directory and give ownership to the non-root user
+RUN mkdir -p /usr/local/share/solara/cdn && chown -R appuser:appuser /usr/local/share/solara
 
 # App code
 COPY warehouse_client.py .
 COPY warehouse_simulation.py .
 
-# Non-root user
-RUN useradd -m appuser
+# Create logs directory with proper ownership
+RUN mkdir -p /app/logs && chown -R appuser:appuser /app
+
+# Health check with longer startup time
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8521/ || exit 1
+
+# Switch to non-root user
 USER appuser
 
-# Expose Solara/Mesa UI port
+# Expose port
 EXPOSE 8521
 
 # Use tini as entrypoint
 ENTRYPOINT ["/usr/bin/tini", "--"]
 
-# Default to visualization server
+# Default to visualization server with full logging
 CMD ["python", "warehouse_simulation.py", "server"]
